@@ -1082,6 +1082,11 @@
     <string name="git_new">New</string>
     <string name="git_no_commits">No commits yet</string>
     <string name="git_commit_count">Commits (%1$s)</string>
+    <string name="git_filter_author">Filter by author</string>
+    <string name="git_filter_all_authors">All authors</string>
+    <string name="git_author_commit_count">%1$d commits</string>
+    <string name="git_graph_expand">Show full branch graph</string>
+    <string name="git_graph_collapse">Collapse branch graph</string>
     <string name="git_credentials_count">Credentials (%1$d)</string>
     <string name="git_load_more_commits">Pull up to load more commits</string>
     <string name="git_no_more_commits">No more commits</string>
