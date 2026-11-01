@@ -338,8 +338,9 @@ internal fun reconcileTurnKeys(
  * 这一段缺的是轮首用户消息而不是折叠头——原样常显会在历史最前面摊开一整轮过程。它们补一个不带
  * 耗时的折叠头（key 见 [leadingHeadKey]），默认收起。
  *
- * 轮头展开态：没手动记录时「末轮且 agent 忙」默认展开、其余默认收起（[activeTurnKey]）；
- * 一旦用户在 [turnOverrides] 里点过，就以其选择为准，任务完成自动收起不会覆盖它。
+* 轮头展开态：手动记录优先（[turnOverrides]）；没有手动记录时——末轮且 agent 忙默认展开，
+ * 收工后默认收起，但 [keepExpandedTurnKey] 指定的那一轮例外（用户正滚离底部浏览历史，
+ * 或关闭了「执行完毕自动收起过程」开关），它收工后仍保持展开。
  *
  * 工具调用分组仍**默认收起**，只认 [groupOverrides] 的手动选择。
  */
@@ -350,6 +351,7 @@ internal fun buildChatItems(
     activeTurnKey: String? = null,
     sessionId: String? = null,
     turnKeys: Map<String, String> = emptyMap(),
+    keepExpandedTurnKey: String? = null,
 ): List<ChatRenderItem> {
     val items = ArrayList<ChatRenderItem>(messages.size)
     val (leading, turns) = splitChatTurns(messages)
@@ -374,7 +376,7 @@ internal fun buildChatItems(
                     key = headKey,
                     endMessageId = null,
                     running = running,
-                    expanded = turnOverrides[headKey] ?: running,
+                    expanded = turnOverrides[headKey] ?: (running || headKey == keepExpandedTurnKey),
                 ),
                 turnProcess = process,
             )
@@ -391,7 +393,7 @@ internal fun buildChatItems(
         val resultId = if (running) null else turn.messages.lastOrNull { it.isResultCandidate() }?.id
         // 过程与常显项分开构建，展开时由主列表逐项组合。
         val process = buildTurnProcessItems(turn.messages, resultId, groupOverrides)
-        val expanded = turnOverrides[stableTurnKey] ?: running
+        val expanded = turnOverrides[stableTurnKey] ?: (running || stableTurnKey == keepExpandedTurnKey)
         if (process.isNotEmpty() || running) {
             items += ChatRenderItem(
                 message = turn.userMessage,
@@ -818,11 +820,25 @@ fun AIChatPanel(
     }
 
     val isBusy = agentState is AgentUIState.Loading || agentState is AgentUIState.Streaming
+    // 跟随底部与当前定位会话必须 saveable：窄窗打开编辑器 / 终端 / Git / 设置都是全屏路由，聊天页
+    // 整棵组合被 dispose。用普通 remember 的话返回时 positionedSession 归 null（当成换了会话重新
+    // 贴底）、followBottom 归 true（校准循环把恢复出的位置拉回底部），浏览历史的位置就丢了。
+    // 声明在这里（而不是滚动逻辑那一段）是因为构建渲染项时就要读 followBottom：用户已滚离底部
+    // 浏览历史时，收工不应折叠当前轮。
+    var positionedSession by rememberSaveable { mutableStateOf<String?>(null) }
+    var followBottom by rememberSaveable { mutableStateOf(true) }
+    // 执行期间用户滚离底部（或点开某条过程项）时，把当时正在跑的那一轮记下来：它收工后
+    // 保持展开，直到用户回到底部。只在「执行中」记录，收工后再怎么滑都不会改动它——
+    // 若直接拿 followBottom 推导这个判定，用户滑一下就会把已折叠的轮次又展开。
+    var browsingTurnKey by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentSessionId) { browsingTurnKey = null }
+    LaunchedEffect(followBottom) {
+        if (followBottom) browsingTurnKey = null
+    }
     // 拆块 + 工具分组：超长助手消息展开成多条有界 item（单条滚动轴、外观连续），
     // 连续的工具调用折成一个「N 次工具调用」分组；chatItems 的顺序即 LazyColumn item 顺序。
     // 提到这里（而不是 LazyColumn 分支内）是因为 isFarFromBottom 的「布局是否对应当前消息」判定
     // 需要它：分组会让 item 数 ≠ 消息数 + 1，不能再拿消息数当期望值。
-    // 末轮且 agent 忙 = 当前正在跑的那一轮：它的折叠头默认展开（显示「执行中」），收工后自动收起。
     val turnKeyHistory = remember(currentSessionId) {
         currentSessionId?.let { viewModel.turnMessageKeys.getOrPut(it) { mutableMapOf() } }
             ?: mutableMapOf()
@@ -836,10 +852,15 @@ fun AIChatPanel(
     }
     SideEffect { turnKeyHistory.putAll(stableTurnKeys) }
     val activeTurnKey = if (isBusy) messages.lastOrNull()?.let { stableTurnKeys[it.id] } else null
+    // 收工后仍保持展开的那一轮：用户执行期间已滚离底部看到的这一轮，或关闭了
+    // 「执行完毕自动收起过程」开关时的最新一轮。
+    val collapseFinishedTurn by viewModel.collapseFinishedTurn.collectAsStateWithLifecycle()
+    val lastTurnKey = messages.lastOrNull()?.let { stableTurnKeys[it.id] }
+    val keepExpandedTurnKey = if (!collapseFinishedTurn) lastTurnKey else browsingTurnKey
     // 长会话里重建整张列表要遍历全部消息（拆轮、分组、拆块），在主线程上做会卡住每次落库与补载历史。
     // 超过阈值后改在后台算，算完前继续显示上一版（LazyColumn 与它的条数一直自洽）；
     // 切换会话后的首版仍同步算，避免短暂显示上一个会话的内容。
-    val chatItemsKey = remember(messages, toolGroupOverrideSnapshot, turnOverrideSnapshot, activeTurnKey, currentSessionId, stableTurnKeys) { Any() }
+    val chatItemsKey = remember(messages, toolGroupOverrideSnapshot, turnOverrideSnapshot, activeTurnKey, keepExpandedTurnKey, currentSessionId, stableTurnKeys) { Any() }
     val buildItems = {
         flattenChatProcesses(buildChatItems(
             messages = messages,
@@ -848,6 +869,7 @@ fun AIChatPanel(
             activeTurnKey = activeTurnKey,
             sessionId = currentSessionId,
             turnKeys = stableTurnKeys,
+            keepExpandedTurnKey = keepExpandedTurnKey,
         ))
     }
     val useAsyncItems = messages.size > ASYNC_CHAT_ITEMS_THRESHOLD
@@ -1192,20 +1214,24 @@ fun AIChatPanel(
     ).text
 
     // 自动滚动跟随
-    // 两个状态都必须 saveable：窄窗打开编辑器 / 终端 / Git / 设置都是全屏路由，聊天页整棵组合
-    // 被 dispose。用普通 remember 的话返回时 positionedSession 归 null（当成换了会话重新贴底）、
-    // followBottom 归 true（校准循环把恢复出的位置拉回底部），浏览历史的位置就丢了。
-    var positionedSession by rememberSaveable { mutableStateOf<String?>(null) }
-    var followBottom by rememberSaveable { mutableStateOf(true) }
     var userScrollGesture by remember { mutableStateOf(false) }
     var pointerDown by remember { mutableStateOf(false) }
     var nestedFling by remember { mutableStateOf(false) }
+    // 用户主动离开底部时：停跟随；若此刻正有一轮在跑，记下它，收工后不折叠。
+    // 读 isBusy / activeTurnKey 用 rememberUpdatedState：userScrollConnection 只创建一次，
+    // 闭包里的普通局部变量会停在首帧的值。
+    val latestBusyForBrowsing = rememberUpdatedState(isBusy)
+    val latestActiveTurnKey = rememberUpdatedState(activeTurnKey)
+    val onUserLeaveBottom: () -> Unit = {
+        followBottom = false
+        if (latestBusyForBrowsing.value) browsingTurnKey = latestActiveTurnKey.value
+    }
     val userScrollConnection = remember(listState) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput && available.y != 0f) {
                     userScrollGesture = true
-                    followBottom = false
+                    onUserLeaveBottom()
                 }
                 return Offset.Zero
             }
@@ -1271,14 +1297,13 @@ fun AIChatPanel(
     }
 
     // 用户开始拖拽：停止跟随。松手时若已到底则恢复跟随。
-    // 额外：流式输出时内容持续增长，用户可能松手后又被「顶」离底部——
-    // 用 snapshotFlow { isAtBottom } 持续监测，只要滑到底部就恢复跟随，
-    // 满足「流式中滚到底部自动继续跟随」。
+    // 只认用户自己的滚动：这里刻意不再用 snapshotFlow { isAtBottom } 持续恢复跟随——
+    // 收工折叠会让内容变矮、isAtBottom 被动变真，那样会把正在浏览历史的用户直接拉回底部。
     val latestIsAtBottom = rememberUpdatedState(isAtBottom)
     LaunchedEffect(listState) {
         listState.interactionSource.interactions.collect { interaction ->
             when (interaction) {
-                is DragInteraction.Start -> followBottom = false
+                is DragInteraction.Start -> onUserLeaveBottom()
                 is DragInteraction.Stop, is DragInteraction.Cancel -> {
                     // 松手后延迟判定是否恢复跟随：等惯性滚动稳定，
                     // 避免「松手在底部但惯性上滑」被立即拉回。
@@ -1288,11 +1313,6 @@ fun AIChatPanel(
                     }
                 }
             }
-        }
-    }
-    LaunchedEffect(listState) {
-        snapshotFlow { latestIsAtBottom.value && !userScrollGesture }.collect { atBottom ->
-            if (atBottom) followBottom = true
         }
     }
 
@@ -1436,7 +1456,7 @@ fun AIChatPanel(
     // 的兜底；卡片比一屏高时前者算出的目标被夹到 0，后者干脆把 item 顶到视口顶——两条路径都会让
     // 被点的那一行整条跳到顶部（概率性出现，取决于点的那一刻布局稳定到哪一帧）。这个跳动比
     // 「展开后底部被输入框挡一点」难接受得多，整段重定位逻辑去掉。
-    val onToolItemToggled: () -> Unit = { followBottom = false }
+    val onToolItemToggled: () -> Unit = { onUserLeaveBottom() }
 
     // 顶部快到头时加载更多历史。绝不能把 firstVisibleItemIndex 作为组合期读取的 effect key：
     // fling 中 index 每跨一个 item 就变一次，会让整个 AIChatPanel 大函数随之重组、连带全部可见

@@ -103,6 +103,8 @@
     <string name="settings_general_input">输入</string>
     <string name="settings_enter_to_send">回车键发送消息</string>
     <string name="settings_enter_to_send_desc">关闭后回车换行，需点发送按钮发送</string>
+    <string name="settings_collapse_finished_turn">执行完毕自动收起过程</string>
+    <string name="settings_collapse_finished_turn_desc">关闭后本轮结束后保持展开；滚动浏览历史时不会自动收起</string>
     <string name="settings_compaction_threshold">自动压缩阈值</string>
     <string name="settings_compaction_threshold_desc">上下文占用达到窗口的该比例时自动压缩</string>
     <string name="settings_percent_value">%1$d%%</string>

@@ -49,6 +49,7 @@ class GeneralSettingsRepository @Inject constructor(
         val STREAM_IDLE_TIMEOUT_SEC_KEY = intPreferencesKey("stream_idle_timeout_sec")
         val MAX_NETWORK_RETRIES_KEY = intPreferencesKey("max_network_retries")
         val ENTER_TO_SEND_KEY = booleanPreferencesKey("enter_to_send")
+        val COLLAPSE_FINISHED_TURN_KEY = booleanPreferencesKey("collapse_finished_turn")
         val COMPACTION_THRESHOLD_PERCENT_KEY = intPreferencesKey("compaction_threshold_percent")
         val SENDFILE_MAX_SIZE_MB_KEY = intPreferencesKey("sendfile_max_size_mb")
         val GOAL_MAX_TURNS_KEY = intPreferencesKey("goal_max_turns")
@@ -176,6 +177,17 @@ class GeneralSettingsRepository @Inject constructor(
         context.generalDataStore.edit { it[ENTER_TO_SEND_KEY] = enabled }
     }
 
+    /**
+     * 一轮执行完毕后是否自动收起该轮的过程（思考与工具调用）；默认开启。
+     * 关闭后最新一轮保持展开，只影响收工那一刻的默认态，历史轮次不变。
+     */
+    val collapseFinishedTurnFlow: Flow<Boolean> =
+        context.generalDataStore.data.map { it[COLLAPSE_FINISHED_TURN_KEY] ?: true }
+
+    suspend fun setCollapseFinishedTurn(enabled: Boolean) {
+        context.generalDataStore.edit { it[COLLAPSE_FINISHED_TURN_KEY] = enabled }
+    }
+
     /** 自动压缩触发阈值（上下文窗口的百分比）；默认 90，限定 1..100。 */
     val compactionThresholdPercentFlow: Flow<Int> = context.generalDataStore.data.map {
         (it[COMPACTION_THRESHOLD_PERCENT_KEY] ?: DEFAULT_COMPACTION_THRESHOLD_PERCENT).coerceIn(1, 100)
@@ -187,6 +199,11 @@ class GeneralSettingsRepository @Inject constructor(
 
     /** 压缩前读取一次触发阈值百分比。 */
     suspend fun compactionThresholdPercent(): Int = compactionThresholdPercentFlow.first()
+
+    /** 备份快照：执行完毕自动折叠开关。 */
+    suspend fun collapseFinishedTurnSnapshot(): Boolean = collapseFinishedTurnFlow.first()
+
+    suspend fun restoreCollapseFinishedTurn(enabled: Boolean) = setCollapseFinishedTurn(enabled)
 
     /** 备份快照：回车发送开关与压缩阈值。 */
     suspend fun enterToSendSnapshot(): Boolean = enterToSendFlow.first()

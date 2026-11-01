@@ -817,6 +817,13 @@ class AIAgentViewModel @Inject constructor(
 
     // endregion
 
+    /**
+     * 「执行完毕自动收起过程」开关（默认开启）；关闭后最新一轮收工仍保持展开。
+     * 无论开关如何，用户滚离底部浏览时都不会自动折叠，见 AIChatPanel 的 keepExpandedTurnKey。
+     */
+    val collapseFinishedTurn: StateFlow<Boolean> = generalSettingsRepository.collapseFinishedTurnFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     /** 当前会话完整信息（根会话与子会话通用；null 表示尚未解析出会话）。 */
     val currentSessionState: StateFlow<ChatSession?> = _currentSessionId
         .flatMapLatest { id ->

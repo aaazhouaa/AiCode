@@ -362,6 +362,7 @@ class BackupManagerImpl @Inject constructor(
         streamIdleTimeoutSec = if (options.appSettings) generalSettingsRepository.streamIdleTimeoutSecSnapshot() else 0,
         maxNetworkRetries = if (options.appSettings) generalSettingsRepository.maxNetworkRetriesSnapshot() else 6,
         enterToSend = if (options.appSettings) generalSettingsRepository.enterToSendSnapshot() else false,
+        collapseFinishedTurn = if (options.appSettings) generalSettingsRepository.collapseFinishedTurnSnapshot() else true,
         compactionThresholdPercent = if (options.appSettings) generalSettingsRepository.compactionThresholdPercentSnapshot() else 90,
         sendFileMaxSizeMb = if (options.appSettings) generalSettingsRepository.sendFileMaxSizeMbSnapshot() else 100,
         deleteExternalWorkspaceSessions = if (options.appSettings) generalSettingsRepository.deleteExternalWorkspaceSessionsSnapshot() else false,
@@ -655,6 +656,7 @@ class BackupManagerImpl @Inject constructor(
             generalSettingsRepository.restoreStreamIdleTimeoutSec(meta.streamIdleTimeoutSec)
             generalSettingsRepository.restoreMaxNetworkRetries(meta.maxNetworkRetries)
             generalSettingsRepository.restoreEnterToSend(meta.enterToSend)
+            generalSettingsRepository.restoreCollapseFinishedTurn(meta.collapseFinishedTurn)
             generalSettingsRepository.restoreCompactionThresholdPercent(meta.compactionThresholdPercent)
             generalSettingsRepository.restoreSendFileMaxSizeMb(meta.sendFileMaxSizeMb)
             generalSettingsRepository.restoreDeleteExternalWorkspaceSessions(meta.deleteExternalWorkspaceSessions)

@@ -56,6 +56,8 @@ internal fun GeneralSettingsSection(
     onSetMaxNetworkRetries: (Int) -> Unit,
     enterToSend: Boolean,
     onToggleEnterToSend: (Boolean) -> Unit,
+    collapseFinishedTurn: Boolean,
+    onToggleCollapseFinishedTurn: (Boolean) -> Unit,
     compactionThresholdPercent: Int,
     onSetCompactionThresholdPercent: (Int) -> Unit,
     sendFileMaxSizeMb: Int,
@@ -136,6 +138,18 @@ internal fun GeneralSettingsSection(
                     AppSwitch(
                         checked = deleteExternalWorkspaceSessions,
                         onCheckedChange = onToggleDeleteExternalWorkspaceSessions
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = null,
+                title = stringResource(R.string.settings_collapse_finished_turn),
+                subtitle = stringResource(R.string.settings_collapse_finished_turn_desc),
+                trailing = {
+                    AppSwitch(
+                        checked = collapseFinishedTurn,
+                        onCheckedChange = onToggleCollapseFinishedTurn
                     )
                 }
             )

@@ -15,7 +15,8 @@ import org.junit.Test
  * 没有手动记录就一律收起——工具调用统一默认不展开。
  *
  * 整轮折叠（最外层）只认 [AIAgentViewModel.turnExpansionOverrides]；没记录时「末轮运行中默认展开、
- * 其余默认收起」，任务收工由 activeTurnKey 归 null 自动收起。
+ * 其余默认收起」，任务收工由 activeTurnKey 归 null 自动收起——除非调用方通过 keepExpandedTurnKey
+ * 指出「用户正在浏览历史」或已关闭自动折叠开关，那一轮收工后仍保持展开。
  *
  * 构建时过程项归入 [ChatRenderItem.turnProcess]，随后展开为独立列表项，保持追加与分页前后的布局结构稳定。
  */
@@ -36,7 +37,8 @@ class ToolGroupExpansionTest {
         overrides: Map<String, Boolean> = emptyMap(),
         turnOverrides: Map<String, Boolean> = emptyMap(),
         activeTurnKey: String? = null,
-    ) = buildChatItems(messages, overrides, turnOverrides, activeTurnKey)
+        keepExpandedTurnKey: String? = null,
+    ) = buildChatItems(messages, overrides, turnOverrides, activeTurnKey, keepExpandedTurnKey = keepExpandedTurnKey)
 
     /** 顶层 item 里唯一的轮头 item。 */
     private fun List<ChatRenderItem>.header() = first { it.turnHeader != null }
@@ -235,6 +237,46 @@ class ToolGroupExpansionTest {
         val header = items.header().turnHeader!!
         assertTrue(header.expanded)
         assertEquals(1, items.groupItems().size)
+    }
+
+    @Test
+    fun keepExpandedTurn_survivesFinishWhileBrowsing() {
+        // 用户已滚离底部在翻历史：收工标签转「已完成」，但过程不能当场收走
+        val items = items(
+            listOf(user("u0"), tool("t1"), tool("t2")),
+            activeTurnKey = null,
+            keepExpandedTurnKey = "turn:u0",
+        )
+        val header = items.header().turnHeader!!
+        assertFalse(header.running)
+        assertTrue(header.expanded)
+        assertEquals(1, items.groupItems().size)
+    }
+
+    @Test
+    fun keepExpandedTurn_onlyAffectsThatTurn() {
+        // 只看历史的那一轮保持展开，更早的已完成轮仍维持收起
+        val messages = listOf(
+            user("u0"), tool("t0"),
+            user("u1"), tool("t1"),
+        )
+        val items = items(messages, activeTurnKey = null, keepExpandedTurnKey = "turn:u1")
+        val headers = items.mapNotNull { it.turnHeader }
+        assertEquals(2, headers.size)
+        assertFalse(headers.first { it.key == "turn:u0" }.expanded)
+        assertTrue(headers.first { it.key == "turn:u1" }.expanded)
+    }
+
+    @Test
+    fun manualCollapseBeatsKeepExpanded() {
+        // 用户亲手收起过：浏览中也不因为 keepExpanded 被重新展开
+        val items = items(
+            listOf(user("u0"), tool("t1")),
+            turnOverrides = mapOf("turn:u0" to false),
+            activeTurnKey = null,
+            keepExpandedTurnKey = "turn:u0",
+        )
+        assertFalse(items.header().turnHeader!!.expanded)
     }
 
     // ---- 窗口按条数截断：最前面那一截半轮 ----

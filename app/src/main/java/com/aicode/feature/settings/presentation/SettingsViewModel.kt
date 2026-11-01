@@ -588,6 +588,9 @@ class SettingsViewModel @Inject constructor(
     private val _enterToSend = MutableStateFlow(false)
     val enterToSend: StateFlow<Boolean> = _enterToSend.asStateFlow()
 
+    private val _collapseFinishedTurn = MutableStateFlow(true)
+    val collapseFinishedTurn: StateFlow<Boolean> = _collapseFinishedTurn.asStateFlow()
+
     private val _compactionThresholdPercent = MutableStateFlow(85)
     val compactionThresholdPercent: StateFlow<Int> = _compactionThresholdPercent.asStateFlow()
 
@@ -996,6 +999,12 @@ class SettingsViewModel @Inject constructor(
             launch {
                 generalSettingsRepository.enterToSendFlow.collectLatest {
                     _enterToSend.value = it
+                }
+            }
+
+            launch {
+                generalSettingsRepository.collapseFinishedTurnFlow.collectLatest {
+                    _collapseFinishedTurn.value = it
                 }
             }
 
@@ -2148,6 +2157,13 @@ class SettingsViewModel @Inject constructor(
     fun setEnterToSend(enabled: Boolean) {
         viewModelScope.launch {
             generalSettingsRepository.setEnterToSend(enabled)
+        }
+    }
+
+    /** 执行完毕后是否自动收起该轮过程。 */
+    fun setCollapseFinishedTurn(enabled: Boolean) {
+        viewModelScope.launch {
+            generalSettingsRepository.setCollapseFinishedTurn(enabled)
         }
     }
 
