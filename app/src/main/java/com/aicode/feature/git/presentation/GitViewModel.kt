@@ -272,8 +272,10 @@ class GitViewModel @Inject constructor(
                     return@launch
                 }
                 // 提交列表与仓库元信息先行：status 是大仓库里唯一可能上秒的命令，不该让提交记录等它。
-                val localRefs = repository.localRefsOnly()
-                val graph = repository.graph(refs = localRefs)
+                // refs 直接拉全量（本地+远程+标签），否则同仓库重进时 loadBranches 因 branchesLoaded
+                // 已 true 而跳过，graph 只带本地 refs、远程分支（origin/main）标注丢失。
+                val allRefs = repository.loadAllRefs()
+                val graph = repository.graph(refs = allRefs.refsByCommit)
                 val commits = graph.toGitCommits()
                 val hasRemote = repository.hasRemote()
                 val hasIdentity = repository.getUserName().isNotBlank()
@@ -284,15 +286,16 @@ class GitViewModel @Inject constructor(
                         loading = false, notARepo = false, commits = commits, graph = graph,
                         hasRemote = hasRemote, hasIdentity = hasIdentity,
                         authorFilter = filterSettings.authorFilter(effectiveRepo),
-                        branchesLoaded = if (repoChanged) false else it.branchesLoaded,
-                        branchesLoading = if (repoChanged) false else it.branchesLoading,
-                        branches = if (repoChanged) emptyList() else it.branches,
-                        tags = if (repoChanged) emptyList() else it.tags,
+                        branches = if (repoChanged) allRefs.branches else it.branches,
+                        tags = if (repoChanged) allRefs.tags else it.tags,
+                        branchesLoaded = if (repoChanged) true else it.branchesLoaded,
+                        branchesLoading = false,
                         repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo
                     )
                 }
                 // 页面已打开：后台拉取全量分支/标签，用户切到 BRANCHES tab 时无需再等。
                 loadBranches()
+                branchesLoadedAt = SystemClock.elapsedRealtime()
                 // status 后台补：工作区改动与未跟踪目录展开态就绪后单独更新，状态页短暂为空属预期。
                 launch {
                     runCatching { repository.status() }
