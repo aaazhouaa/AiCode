@@ -46,6 +46,19 @@ class SystemPromptProvider @Inject constructor(
         fun build(ctx: AgentContext): String?
     }
 
+    /**
+     * 清除指定会话的记忆清单缓存。
+     *
+     * 当用户在当前会话中保存或编辑记忆时，需要失效缓存以便下次构建 system prompt
+     * 时重新扫描，让新记忆立即生效。
+     *
+     * @param sessionId 当前会话 ID
+     * @param projectRoot 当前工作区路径
+     */
+    fun invalidateMemoryCache(sessionId: String?, projectRoot: String?) {
+        memoryListSource.invalidate(sessionId, projectRoot)
+    }
+
     private inner class StaticRuleSource : PromptSource {
         // 每次都重新读盘：未编辑时字符串一致，KV Cache 照常命中；编辑后立即生效，无需重启。
         // 技能/记忆等运行期内容由末尾的 99-runtime-context.md 片段用 {{AICODE_*}} 变量承载。
@@ -223,6 +236,16 @@ class SystemPromptProvider @Inject constructor(
             cachedByKey[key] = result
             trimIfNeeded()
             return result
+        }
+
+        /**
+         * 失效指定会话的缓存。
+         *
+         * 当用户保存或编辑记忆后调用，让下次构建 system prompt 时重新扫描记忆清单。
+         */
+        fun invalidate(sessionId: String?, projectRoot: String?) {
+            val key = SourceCacheKey(sessionId, projectRoot ?: "")
+            cachedByKey.remove(key)
         }
 
         private fun trimIfNeeded() {

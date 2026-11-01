@@ -26,6 +26,7 @@ import javax.inject.Inject
 
 class MemoryTool @Inject constructor(
     private val memoryRepository: MemoryRepository,
+    private val systemPromptProvider: com.aicode.feature.agent.domain.prompt.SystemPromptProvider,
     @param:ApplicationContext private val appContext: Context
 ) : AbstractContextualTool() {
     private companion object {
@@ -123,9 +124,9 @@ class MemoryTool @Inject constructor(
             when (action) {
                 "list" -> handleList(context.projectRoot)
                 "read" -> handleRead(memoryName, context.projectRoot)
-                "save" -> handleSave(args, memoryName, scope, context.projectRoot)
-                "edit" -> handleEdit(args, memoryName, scope, context.projectRoot)
-                "delete" -> handleDelete(memoryName, scope, context.projectRoot)
+                "save" -> handleSave(args, memoryName, scope, context)
+                "edit" -> handleEdit(args, memoryName, scope, context)
+                "delete" -> handleDelete(memoryName, scope, context)
                 else -> ToolResult.Error("不支持的操作：$action", "UNSUPPORTED_ACTION")
             }
         } catch (e: Exception) {
@@ -149,38 +150,45 @@ class MemoryTool @Inject constructor(
         return ToolResult.Success(JsonPrimitive(content))
     }
 
-    private fun handleSave(args: Map<String, JsonElement>, name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+    private fun handleSave(args: Map<String, JsonElement>, name: String?, scope: MemoryScope, context: AgentContext): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("save 操作缺少必需参数：name", "MISSING_NAME")
         val description = args["description"]?.jsonPrimitive?.contentOrNull?.trim()
             ?: return ToolResult.Error("save 操作缺少必需参数：description", "MISSING_DESCRIPTION")
         val content = args["content"]?.jsonPrimitive?.contentOrNull?.trim()
             ?: return ToolResult.Error("save 操作缺少必需参数：content", "MISSING_CONTENT")
 
-        if (scope == MemoryScope.PROJECT && projectRoot.isNullOrBlank()) {
+        if (scope == MemoryScope.PROJECT && context.projectRoot.isNullOrBlank()) {
             return ToolResult.Error("当前未选择工作区，无法保存项目级记忆，请改用 scope=global", "NO_WORKSPACE")
         }
 
-        val success = memoryRepository.saveMemory(name, description, content, scope, projectRoot)
+        val success = memoryRepository.saveMemory(name, description, content, scope, context.projectRoot)
         return if (success) {
+            // 保存成功后失效当前会话的记忆缓存，让新记忆立即在下次构建 system prompt 时生效
+            systemPromptProvider.invalidateMemoryCache(context.sessionId, context.projectRoot)
+            FileLogger.i(TAG, "已失效会话 ${context.sessionId} 的记忆缓存")
             ToolResult.Success(JsonPrimitive(appContext.getString(R.string.tool_memory_saved, name, scope.name.lowercase())))
         } else {
             ToolResult.Error("保存记忆失败，请查看日志。", "SAVE_FAILED")
         }
     }
 
-    private fun handleEdit(args: Map<String, JsonElement>, name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+    private fun handleEdit(args: Map<String, JsonElement>, name: String?, scope: MemoryScope, context: AgentContext): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("edit 操作缺少必需参数：name", "MISSING_NAME")
 
         val edits = parseEdits(args)
             ?: return ToolResult.Error("edit 操作缺少必需参数：edits", "MISSING_EDITS")
 
-        if (scope == MemoryScope.PROJECT && projectRoot.isNullOrBlank()) {
+        if (scope == MemoryScope.PROJECT && context.projectRoot.isNullOrBlank()) {
             return ToolResult.Error("当前未选择工作区，无法编辑项目级记忆，请改用 scope=global", "NO_WORKSPACE")
         }
 
-        return when (val result = memoryRepository.editMemory(name, edits, scope, projectRoot)) {
-            is MemoryEditResult.Success ->
+        return when (val result = memoryRepository.editMemory(name, edits, scope, context.projectRoot)) {
+            is MemoryEditResult.Success -> {
+                // 编辑成功后失效当前会话的记忆缓存（描述可能被修改）
+                systemPromptProvider.invalidateMemoryCache(context.sessionId, context.projectRoot)
+                FileLogger.i(TAG, "已失效会话 ${context.sessionId} 的记忆缓存")
                 ToolResult.Success(JsonPrimitive("已编辑记忆「$name」的正文（${scope.name.lowercase()} 作用域）。"))
+            }
             is MemoryEditResult.NotFound ->
                 ToolResult.Error("未找到记忆「${result.name}」，请先通过 save 创建，或确认 name 与作用域是否正确。", "MEMORY_NOT_FOUND")
             is MemoryEditResult.Error ->
@@ -200,11 +208,14 @@ class MemoryTool @Inject constructor(
         }.takeIf { it.isNotEmpty() }
     }
 
-    private fun handleDelete(name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+    private fun handleDelete(name: String?, scope: MemoryScope, context: AgentContext): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("delete 操作缺少必需参数：name", "MISSING_NAME")
         
-        val success = memoryRepository.deleteMemory(name, scope, projectRoot)
+        val success = memoryRepository.deleteMemory(name, scope, context.projectRoot)
         return if (success) {
+            // 删除成功后失效当前会话的记忆缓存
+            systemPromptProvider.invalidateMemoryCache(context.sessionId, context.projectRoot)
+            FileLogger.i(TAG, "已失效会话 ${context.sessionId} 的记忆缓存")
             ToolResult.Success(JsonPrimitive("已删除 ${scope.name.lowercase()} 作用域的记忆「$name」。"))
         } else {
             ToolResult.Error("删除失败，记忆「$name」可能不存在于该作用域。", "DELETE_FAILED")

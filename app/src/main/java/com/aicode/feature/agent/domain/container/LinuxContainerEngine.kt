@@ -87,6 +87,12 @@ class LinuxContainerEngine @Inject constructor(
     private val initMutex = Mutex()
 
     /**
+     * 全局 Gradle 构建互斥锁：强制 Gradle 构建串行执行，避免多个构建任务并发导致
+     * daemon 锁文件竞争、死锁或资源冲突。第二个构建请求会排队等待第一个完成（或超时）。
+     */
+    private val gradleBuildMutex = Mutex()
+
+    /**
      * 容器初始化的独立协程作用域：不随任何页面/调用方取消而中断，
      * 保证退出终端页后初始化仍在后台继续，下次进入可复用或等待其完成。
      */
@@ -165,6 +171,14 @@ class LinuxContainerEngine @Inject constructor(
          * provision-script-skipped），App 端仅读它判断是否完成。
          */
         private const val PROVISION_VERSION = "provision-script-v9"
+
+        /**
+         * 检测命令是否为 Gradle 构建命令。
+         * 匹配 gradlew 或 gradle 后跟构庺相关 task（assemble、bundle、build）。
+         */
+        private fun isGradleBuildCommand(command: String): Boolean =
+            Regex("""(^|\s)(\./)?gradlew?\s+(.*\s)?(assemble|bundle|build)\w*""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(command)
     }
 
     /** 标记基础包已按 [PROVISION_VERSION] 配置完成（内容为版本号，或用户手动安装的跳过标记），按当前 profile 的 rootfs 目录存放（内置/自定义各自独立）。 */
@@ -181,6 +195,8 @@ class LinuxContainerEngine @Inject constructor(
      * [timeoutMs] 为命令最长执行时间（毫秒），默认 [DEFAULT_TIMEOUT_MS]，上限 [MAX_TIMEOUT_MS]。
      * 超时后强制终止子进程并在末尾追加一行超时提示，[CommandEvent.Exit] 退出码记为 null。
      * 由于 readLine 是阻塞读，单靠协程超时无法打断，这里用独立看门狗 destroy 进程来解除阻塞。
+     *
+     * Gradle 构建命令会被串行化执行，避免并发构建导致 daemon 锁竞争。
      */
     override fun runCommandStream(
         command: String,
@@ -193,7 +209,20 @@ class LinuxContainerEngine @Inject constructor(
             emit(CommandEvent.Exit(null))
             return@flow
         }
-        emitAll(streamExecNoInstall(command, projectPath, timeoutMs))
+
+        // Gradle 构建命令串行执行，其他命令直接执行
+        if (isGradleBuildCommand(command)) {
+            gradleBuildMutex.withLock {
+                FileLogger.i(TAG, "Gradle 构建命令(流式)，获取互斥锁: ${sanitizeCommandForLog(command)}")
+                try {
+                    emitAll(streamExecNoInstall(command, projectPath, timeoutMs))
+                } finally {
+                    FileLogger.i(TAG, "Gradle 构建命令(流式)完成，释放互斥锁: ${sanitizeCommandForLog(command)}")
+                }
+            }
+        } else {
+            emitAll(streamExecNoInstall(command, projectPath, timeoutMs))
+        }
     }.flowOn(Dispatchers.IO)
     /**
      * 在容器内流式执行命令的「裸」实现：每读到一行就 emit [CommandEvent.Line]，命令结束 emit
@@ -277,6 +306,8 @@ class LinuxContainerEngine @Inject constructor(
      *
      * [timeoutMs] 为命令最长执行时间（毫秒），默认 [DEFAULT_TIMEOUT_MS]，上限 [MAX_TIMEOUT_MS]。
      * 超时后强制终止子进程，返回已收集到的部分输出并在末尾追加超时提示。
+     *
+     * Gradle 构建命令会被串行化执行，避免并发构建导致 daemon 锁竞争。
      */
     override suspend fun runCommandSync(
         command: String,
@@ -285,12 +316,27 @@ class LinuxContainerEngine @Inject constructor(
     ): String = withContext(Dispatchers.IO) {
         // 未就绪时不自动初始化，直接返回引导文案，由用户去终端页完成初始化。
         notReadyHint()?.let { return@withContext it }
-        execCaptured(command, projectPath, timeoutMs).output
+
+        // Gradle 构建命令串行执行，其他命令直接执行
+        if (isGradleBuildCommand(command)) {
+            gradleBuildMutex.withLock {
+                FileLogger.i(TAG, "Gradle 构建命令，获取互斥锁: ${sanitizeCommandForLog(command)}")
+                try {
+                    execCaptured(command, projectPath, timeoutMs).output
+                } finally {
+                    FileLogger.i(TAG, "Gradle 构建命令完成，释放互斥锁: ${sanitizeCommandForLog(command)}")
+                }
+            }
+        } else {
+            execCaptured(command, projectPath, timeoutMs).output
+        }
     }
 
     /**
      * 同 [runCommandSync]，但一并返回退出码（超时/异常时为 null）。供需要据退出码判成败的调用方
      * 使用——如 git 写操作：git 非零退出码并非进程崩溃，[runCommandSync] 仅返回文本会让上层误报成功。
+     *
+     * Gradle 构建命令会被串行化执行，避免并发构建导致 daemon 锁竞争。
      */
     override suspend fun runCommandSyncWithExit(
         command: String,
@@ -299,7 +345,20 @@ class LinuxContainerEngine @Inject constructor(
     ): CommandResult = withContext(Dispatchers.IO) {
         // 未就绪时不自动初始化，直接返回引导文案，由用户去终端页完成初始化。
         notReadyHint()?.let { return@withContext CommandResult(it, null) }
-        val r = execCaptured(command, projectPath, timeoutMs)
+
+        // Gradle 构建命令串行执行，其他命令直接执行
+        val r = if (isGradleBuildCommand(command)) {
+            gradleBuildMutex.withLock {
+                FileLogger.i(TAG, "Gradle 构建命令，获取互斥锁: ${sanitizeCommandForLog(command)}")
+                try {
+                    execCaptured(command, projectPath, timeoutMs)
+                } finally {
+                    FileLogger.i(TAG, "Gradle 构建命令完成，释放互斥锁: ${sanitizeCommandForLog(command)}")
+                }
+            }
+        } else {
+            execCaptured(command, projectPath, timeoutMs)
+        }
         CommandResult(r.output, r.exitCode, r.truncated)
     }
 
@@ -439,6 +498,12 @@ class LinuxContainerEngine @Inject constructor(
             runCatching { process.destroy() }
             delay(TIMEOUT_KILL_GRACE_MS)
             if (process.isAlive) runCatching { process.destroyForcibly() }
+
+            // Gradle 构建命令被强杀后，清理可能残留的锁文件
+            if (isGradleBuildCommand(command)) {
+                FileLogger.i(TAG, "Gradle 构建命令被强杀，尝试清理 daemon 锁文件")
+                cleanupGradleLocks()
+            }
             return@launch
         }
     }
@@ -446,6 +511,51 @@ class LinuxContainerEngine @Inject constructor(
     /** 超时提示行（拼进输出，喂回模型/展示给用户）。 */
     private fun timeoutNotice(timeoutMs: Long): String =
         "[命令执行超时：超过 ${timeoutMs}ms 已被强制终止]"
+
+    /**
+     * 清理 Gradle daemon 锁文件。
+     *
+     * 当 Gradle 构建命令被 watchdog 强杀后，daemon 可能没来得及清理锁文件，
+     * 导致后续构建死锁。这里主动删除 ~/.gradle/caches/ 下的所有 .lock 文件。
+     */
+    private fun cleanupGradleLocks() {
+        try {
+            val profile = currentProfile
+            val gradleHome = java.io.File(
+                containerInstaller.rootfsDirFor(profile),
+                "root/.gradle/caches"
+            )
+            if (!gradleHome.exists()) {
+                FileLogger.v(TAG, "Gradle 缓存目录不存在，跳过锁文件清理")
+                return
+            }
+
+            val locks = gradleHome.walkTopDown()
+                .filter { it.isFile && it.extension == "lock" }
+                .toList()
+
+            if (locks.isEmpty()) {
+                FileLogger.v(TAG, "Gradle 锁文件已清空，无需清理")
+                return
+            }
+
+            FileLogger.i(TAG, "检测到 ${locks.size} 个 Gradle 锁文件，开始清理")
+            var deleted = 0
+            locks.forEach { lockFile ->
+                runCatching {
+                    if (lockFile.delete()) {
+                        deleted++
+                        FileLogger.v(TAG, "已删除锁文件: ${lockFile.absolutePath}")
+                    }
+                }.onFailure { e ->
+                    FileLogger.w(TAG, "删除锁文件失败: ${lockFile.absolutePath}", e)
+                }
+            }
+            FileLogger.i(TAG, "Gradle 锁文件清理完成，删除 $deleted/${locks.size} 个")
+        } catch (e: Exception) {
+            FileLogger.e(TAG, "Gradle 锁文件清理异常", e)
+        }
+    }
 
     /**
      * 启动进程。rootfs/proot 安装就绪则用 PRoot 进入容器；
