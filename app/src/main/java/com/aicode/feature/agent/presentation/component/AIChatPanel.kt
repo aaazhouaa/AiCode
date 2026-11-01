@@ -702,6 +702,7 @@ fun AIChatPanel(
     val contextUsages by viewModel.contextUsages.collectAsStateWithLifecycle()
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
+    val dashboardRunningTaskCount by viewModel.runningTaskCount.collectAsStateWithLifecycle()
     val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
     val retryState by viewModel.retryState.collectAsStateWithLifecycle()
     val keySwitchState by viewModel.keySwitchState.collectAsStateWithLifecycle()
@@ -980,7 +981,8 @@ fun AIChatPanel(
             agentState = agentStateStr,
             sessionMode = currentMode.name.lowercase(),
             reasoningEffort = reasoningEffort.apiValue,
-            refreshReason = refreshReason
+            refreshReason = refreshReason,
+            runningTasks = viewModel.dashboardTasks()
         )
     }
 
@@ -1041,6 +1043,19 @@ fun AIChatPanel(
         if (activeModel.isNotBlank()) {
             settingsViewModel?.resolveModelMetadata(provider.id, provider.type, listOf(activeModel))
         }
+    }
+
+    // 运行中任务数变化（任务开始或结束）时自动重跑一次面板：否则脚本 body 停在旧状态，
+    // 标题行的 N 与展开后的列表不同步——任务已结束仍显示 N 个任务，或任务已开始列表还空着。
+    var lastDashboardTaskCount by remember { mutableStateOf(0) }
+    LaunchedEffect(dashboardRunningTaskCount) {
+        val previous = lastDashboardTaskCount
+        lastDashboardTaskCount = dashboardRunningTaskCount
+        if (previous == dashboardRunningTaskCount) return@LaunchedEffect
+        val provider = latestActiveProvider ?: return@LaunchedEffect
+        if (provider.dashboardScriptPath.isBlank()) return@LaunchedEffect
+        val context = latestBuildDashboardContext(0, 0, 0, "task")
+        settingsViewModel?.refreshProviderDashboard(provider, context = context, force = true)
     }
 
     // 主页模型选择面板复用 ModelSelectionSheet，能力 Tag 依赖全量模型元数据；
@@ -1864,6 +1879,7 @@ fun AIChatPanel(
                 onEditQueued = { queuedEditing = it },
                 onInterjectQueued = { viewModel.interjectQueuedRequest(it) },
                 dashboardState = currentDashboardState,
+                dashboardRunningTaskCount = dashboardRunningTaskCount,
                 todoItems = currentTodoItems,
                 sessionId = currentSessionId.orEmpty(),
                 onTodoExpandedChange = { todoExpanded = it },

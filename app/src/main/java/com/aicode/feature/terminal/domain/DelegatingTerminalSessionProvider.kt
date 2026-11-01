@@ -8,8 +8,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -44,6 +46,12 @@ class DelegatingTerminalSessionProvider @Inject constructor(
                 if (mode == ExecutionMode.REMOTE_SSH) remote.tabFinishedEvents else local.tabFinishedEvents
             }
             .shareIn(scope, SharingStarted.Eagerly, replay = 0)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override val tabsFlow: StateFlow<List<TabInfo>> =
+        modeHolder.mode
+            .flatMapLatest { mode -> if (mode == ExecutionMode.REMOTE_SSH) remote.tabsFlow else local.tabsFlow }
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     override suspend fun startBackgroundCommand(
         command: String,

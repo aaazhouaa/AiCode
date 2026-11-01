@@ -20,9 +20,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -192,15 +195,11 @@ class RemoteTerminalSessionManager @Inject constructor(
         }.getOrNull() ?: ""
     }
 
-    override fun listTabs(): List<TabInfo> = _tabs.value.map {
-        TabInfo(
-            id = it.id,
-            title = it.title,
-            isBackground = it.isBackground,
-            running = it.runState is RunState.Running,
-            command = it.command
-        )
-    }
+    override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
+
+    override val tabsFlow: StateFlow<List<TabInfo>> = tabs
+        .map { list -> list.map { it.toTabInfo() } }
+        .stateIn(monitorScope, SharingStarted.Eagerly, emptyList())
 
     override fun closeTab(id: String): Boolean {
         val tab = tab(id) ?: return false

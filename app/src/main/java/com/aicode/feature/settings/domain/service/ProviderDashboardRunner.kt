@@ -17,6 +17,7 @@ import com.aicode.feature.settings.domain.model.ColumnWidth
 import com.aicode.feature.settings.domain.model.ContainerElement
 import com.aicode.feature.settings.domain.model.ContainerStyle
 import com.aicode.feature.settings.domain.model.DashboardContext
+import com.aicode.feature.settings.domain.model.DashboardTask
 import com.aicode.feature.settings.domain.model.DividerElement
 import com.aicode.feature.settings.domain.model.FactItem
 import com.aicode.feature.settings.domain.model.FactSetElement
@@ -43,9 +44,12 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.put
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -102,7 +106,11 @@ class ProviderDashboardRunner @Inject constructor(
                 return AdaptiveCardRoot(
                     version = version,
                     compact = compactElement,
-                    body = bodyList
+                    body = bodyList,
+                    headerBalance = (element["header"] as? JsonObject)
+                        ?.get("balance")
+                        ?.primitiveStringOrNull()
+                        ?.takeIf { it.isNotBlank() }
                 )
             } else if (element is JsonArray) {
                 val bodyList = mutableListOf<AdaptiveCardElement>()
@@ -759,6 +767,10 @@ class ProviderDashboardRunner @Inject constructor(
             envs.add("AICODE_SESSION_MODE=${escape(context.sessionMode)}")
             envs.add("AICODE_REASONING_EFFORT=${escape(context.reasoningEffort)}")
             envs.add("AICODE_REFRESH_REASON=${escape(context.refreshReason)}")
+            // 后台任务：App 整理好的结构化 JSON（终端会话 / 运行中的工具 / 子代理），
+            // 脚本不必再扫 ps 猜。单行 JSON，经 escape 成 shell 单引号字符串。
+            envs.add("AICODE_RUNNING_TASKS=${escape(tasksJson(context.runningTasks))}")
+            envs.add("AICODE_RUNNING_TASK_COUNT=${context.runningTasks.size}")
         }
 
         return envs.joinToString(" ")
@@ -767,6 +779,19 @@ class ProviderDashboardRunner @Inject constructor(
     /** 把用户填写的参数 Key 规整为合法的环境变量名段（大写，仅保留字母/数字/下划线）。 */
     private fun sanitizeEnvKey(key: String): String =
         key.trim().uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }
+
+    /** 后台任务 → 单行 JSON 数组，字段与 AICODE_RUNNING_TASKS 的文档一致。 */
+    private fun tasksJson(tasks: List<DashboardTask>): String = buildJsonArray {
+        tasks.forEach { task ->
+            addJsonObject {
+                put("kind", task.kind)
+                put("title", task.title)
+                put("detail", task.detail)
+                put("elapsedSec", task.elapsedSec)
+                put("running", task.running)
+            }
+        }
+    }.toString()
 
     /** 解析脚本参数值中的 {{...}} 占位符，引用当前提供商配置，避免敏感信息重复填写。 */
     private fun resolveScriptParamPlaceholders(

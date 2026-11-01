@@ -26,7 +26,27 @@ data class DashboardContext(
     val agentState: String = "",
     val sessionMode: String = "",
     val reasoningEffort: String = "",
-    val refreshReason: String = ""
+    val refreshReason: String = "",
+    /** 当前在跑的后台任务（终端会话 / 运行中的工具 / 子代理），供面板脚本直接展示。 */
+    val runningTasks: List<DashboardTask> = emptyList()
+)
+
+/**
+ * 面板可见的一条后台任务。
+ *
+ * 由 App 自己整理，而不是让脚本去扫 `ps`：容器里 PRoot 的 /proc 信息不完整，
+ * 也看不到 App 侧的语义（哪条是用户开的终端、哪个是正在执行的工具、哪个是子代理）。
+ */
+data class DashboardTask(
+    /** terminal / tool / subagent。 */
+    val kind: String,
+    /** 人类可读的任务名，如「终端 · npm run dev」「正在编辑文件」「Explore」。 */
+    val title: String,
+    /** 补充信息：命令、工具参数或子代理摘要。 */
+    val detail: String = "",
+    /** App 已算好的已运行秒数；拿不到时为 0。 */
+    val elapsedSec: Long = 0,
+    val running: Boolean = true
 )
 
 /**
@@ -35,7 +55,9 @@ data class DashboardContext(
 data class AdaptiveCardRoot(
     val version: String = "1.5",
     val compact: AdaptiveCardElement? = null,
-    val body: List<AdaptiveCardElement> = emptyList()
+    val body: List<AdaptiveCardElement> = emptyList(),
+    /** 面板标题行右侧的摘要（目前是余额），由脚本在卡片顶层 `header.balance` 提供；null 不显示。 */
+    val headerBalance: String? = null
 )
 
 /**

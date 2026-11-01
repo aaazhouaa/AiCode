@@ -70,6 +70,15 @@ class TerminalTab(
     var finishedNotified: Boolean = false
 }
 
+/** 面板 / AI 展示用的标签摘要：不携带 session/view 等运行时对象。 */
+fun TerminalTab.toTabInfo(): TabInfo = TabInfo(
+    id = id,
+    title = title,
+    isBackground = isBackground,
+    running = runState is RunState.Running,
+    command = command
+)
+
 /**
  * 终端标签摘要，供 AI 的 terminal 工具列出标签时使用（不携带 session/view 等运行时对象）。
  */

@@ -29,6 +29,7 @@ import com.aicode.feature.agent.data.local.entity.ChatSessionEntity
 import com.aicode.feature.agent.domain.container.ContainerInitState
 import com.aicode.feature.agent.domain.container.ContainerOsDetector
 import com.aicode.feature.agent.domain.container.LinuxContainerEngine
+import com.aicode.feature.settings.domain.model.DashboardTask
 import com.aicode.feature.settings.domain.model.ProviderType
 import com.aicode.feature.settings.domain.service.ModelCostCalculator
 import com.aicode.feature.settings.domain.repository.AIProviderRepository
@@ -894,6 +895,90 @@ class AIAgentViewModel @Inject constructor(
             else _runningTools.map { it[id]?.values?.toList() ?: emptyList() }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** 面板任务耗时起点：key = kind:id。任务从列表消失后清掉，避免无界增长。 */
+    private val dashboardTaskStartedAt = mutableMapOf<String, Long>()
+
+    /** 面板标题行展示的「N 个任务」：终端运行中标签 + 当前会话运行中工具 + 运行中子代理。 */
+    val runningTaskCount: StateFlow<Int> = combine(
+        runningTool,
+        subAgentCards,
+        terminalSessionProvider.tabsFlow
+    ) { tools, subs, tabs ->
+        tools.size + subs.values.count { it.status == SubAgentCardStatus.RUNNING } + tabs.count { it.running }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    /**
+     * 面板用的后台任务快照：终端会话、当前会话运行中的工具、运行中的子代理。
+     *
+     * 不给脚本扫 `ps`：容器里 PRoot 下的 /proc 信息不完整，也分不清哪些是用户任务、
+     * 哪些是 App 自己的调用链。耗时从 App 首次观察到该任务起算（重启后任务本就中断，不必持久化）。
+     */
+    fun dashboardTasks(): List<DashboardTask> {
+        val now = System.currentTimeMillis()
+        val tasks = mutableListOf<DashboardTask>()
+        val alive = mutableSetOf<String>()
+
+        terminalSessionProvider.listTabs().filter { it.running }.forEach { tab ->
+            val key = "terminal:${tab.id}"
+            alive += key
+            val startedAt = dashboardTaskStartedAt.getOrPut(key) { now }
+            tasks += DashboardTask(
+                kind = "terminal",
+                title = tab.title.ifBlank { "终端" },
+                detail = tab.command.orEmpty(),
+                elapsedSec = ((now - startedAt).coerceAtLeast(0)) / 1000
+            )
+        }
+
+        runningTool.value.forEach { tool ->
+            val key = "tool:${tool.messageId}"
+            alive += key
+            val startedAt = dashboardTaskStartedAt.getOrPut(key) { now }
+            tasks += DashboardTask(
+                kind = "tool",
+                title = toolDisplayName(tool.toolName),
+                detail = tool.toolArgs,
+                elapsedSec = ((now - startedAt).coerceAtLeast(0)) / 1000
+            )
+        }
+
+        subAgentCards.value.values
+            .filter { it.status == SubAgentCardStatus.RUNNING }
+            .forEach { card ->
+                tasks += DashboardTask(
+                    kind = "subagent",
+                    title = card.agentName ?: card.title.ifBlank { "子代理" },
+                    detail = card.excerpt.orEmpty(),
+                    elapsedSec = (card.elapsedMs ?: 0L) / 1000
+                )
+            }
+
+        dashboardTaskStartedAt.keys.retainAll(alive)
+        return tasks
+    }
+
+    /** 工具名 → 面板上的人类可读名称，认不出的原样返回。 */
+    private fun toolDisplayName(toolName: String): String = when (toolName) {
+        "Bash" -> "执行命令"
+        "terminal" -> "终端任务"
+        "readFile" -> "读取文件"
+        "writeFile" -> "写入文件"
+        "editFile" -> "编辑文件"
+        "search" -> "搜索代码"
+        "list" -> "浏览文件"
+        "websearch" -> "联网搜索"
+        "webfetch" -> "抓取网页"
+        "browser" -> "操作浏览器"
+        "generateImage" -> "生成图片"
+        "viewImage" -> "查看图片"
+        "task" -> "启动子代理"
+        "todo" -> "整理待办"
+        "askUserQuestion" -> "询问用户"
+        "memory" -> "读写记忆"
+        "loadSkill" -> "加载技能"
+        else -> toolName.ifBlank { "工具调用" }
+    }
 
     /** 添加/更新一个运行中工具（按 msgId 定位，支持多个工具并行）。 */
     private fun setRunningTool(sessionId: String, msgId: String, tool: RunningToolOutput) {

@@ -1865,6 +1865,7 @@
 
     <!-- Custom dashboard bar -->
     <string name="dashboard_fetching">Loading dashboard…</string>
+    <string name="dashboard_running_task_count">%1$d tasks</string>
     <string name="dashboard_fetch_failed_retry">Load failed, tap to retry</string>
     <string name="dashboard_tap_to_query">Tap to refresh</string>
 

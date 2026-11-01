@@ -1,6 +1,7 @@
 package com.aicode.feature.terminal.domain
 
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * 终端会话后端抽象：把"终端会话在哪运行"从硬编码的本地 Termux PTY 解耦。
@@ -14,6 +15,9 @@ interface TerminalSessionProvider {
 
     /** 后台命令结束时 emit 的事件，供 ViewModel 订阅后通知 AI。 */
     val tabFinishedEvents: SharedFlow<TabFinishedEvent>
+
+    /** 全部标签摘要的实时流，供面板任务数等只读展示使用。 */
+    val tabsFlow: StateFlow<List<TabInfo>>
 
     /** 把一条命令挂后台跑（如 `npm run dev`），返回唯一 tabId。 */
     suspend fun startBackgroundCommand(

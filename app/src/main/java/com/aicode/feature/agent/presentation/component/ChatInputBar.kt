@@ -188,6 +188,8 @@ internal fun ChatInputBar(
     tokenProgress: Float = 0f,
     tokenEstimated: Boolean = false,
     dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
+    /** 面板标题行展示的运行中任务数（终端会话 + 运行中工具 + 子代理）。 */
+    dashboardRunningTaskCount: Int = 0,
     onRefreshDashboard: () -> Unit = {},
     onRefreshDashboardByButton: () -> Unit = {},
     onDashboardExpandedChange: (Boolean) -> Unit = {},
@@ -459,6 +461,7 @@ internal fun ChatInputBar(
                 ProviderDashboardBar(
                     provider = activeProvider,
                     state = dashboardState,
+                    runningTaskCount = dashboardRunningTaskCount,
                     onRefresh = onRefreshDashboard,
                     onRefreshByButton = onRefreshDashboardByButton,
                     onExpandedChange = onDashboardExpandedChange,

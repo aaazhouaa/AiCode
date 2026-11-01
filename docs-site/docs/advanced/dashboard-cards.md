@@ -68,6 +68,33 @@ AI 助手与开发者可以依据此规范，编写面板脚本（Python / Node 
 | `AICODE_REASONING_EFFORT` | `high` | 当前思考强度档位：`none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max` |
 | `AICODE_REFRESH_REASON` | `llm` | 本次面板刷新的触发原因：`session`（进入/切换会话，数据就绪后触发）、`llm`（LLM 请求返回后自动刷新）、`done`（AI 一轮任务完成后自动刷新，此时 `AICODE_AGENT_STATE` 为最终状态）、`manual`（手动点击刷新/错误重试）、`button`（卡片内刷新按钮触发） |
 
+### 后台任务变量
+
+由 App 直接整理好的任务快照，不需要脚本自己扫 `ps`（容器里 PRoot 的 `/proc` 不完整，也分不清用户任务与 App 调用链、常驻守护进程）。
+
+| 环境变量名 | 示例值 | 说明 |
+| :--- | :--- | :--- |
+| `AICODE_RUNNING_TASKS` | `[{"kind":"terminal",...}]` | 单行 JSON 数组，当前在跑的后台任务；无任务时为 `[]` |
+| `AICODE_RUNNING_TASK_COUNT` | `2` | 任务数量，便于脚本快速判断 |
+
+`AICODE_RUNNING_TASKS` 数组元素字段：
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| `kind` | string | `terminal`（终端会话）/ `tool`（正在执行的工具）/ `subagent`（子代理） |
+| `title` | string | 人类可读名称，如 `终端`、`编辑文件`、`Explore` |
+| `detail` | string | 补充信息：命令、工具参数或子代理摘要，可能为空 |
+| `elapsedSec` | int | App 已算好的已运行秒数；拿不到时为 0 |
+| `running` | bool | 是否仍在运行（当前接口只下发运行中的任务） |
+
+耗时从 App 首次观察到该任务起算；App 重启后运行中的任务本就中断，因此不跨重启保留。
+
+### 内置脚本
+
+`~/.aicode/scripts/` 下预置了 `后台任务监控.py`：直接读 `AICODE_RUNNING_TASKS`，在输入框上方列出终端会话、正在执行的工具与子代理；没有任务时显示模型状态与 Token 用量。首次启动自动释放，已存在则不覆盖（保留你的修改）。在「供应商编辑 → 面板脚本」里按文件名选即可。
+
+该脚本还会按常见供应商的余额接口查一次余额（DeepSeek `/user/balance`、SiliconFlow `/user/info`、OpenRouter `/credits`），查到就显示在标题行供应商名右侧与收起态里，查不到则完全不显示。
+
 ### 工作区变量
 
 | 环境变量名 | 示例值 | 说明 |
@@ -134,6 +161,7 @@ AICODE_KEY_ACCOUNT_ID=<当前 API Key>。
 {
   "type": "AdaptiveCard",
   "version": "1.5",
+  "header": { "balance": "¥12.34" },
   "compact": {
     "type": "Row",
     "items": [ ... ]
@@ -148,6 +176,7 @@ AICODE_KEY_ACCOUNT_ID=<当前 API Key>。
 | :--- | :--- | :--- | :--- | :--- |
 | `type` | String | 是 | - | 固定为 `"AdaptiveCard"` |
 | `version` | String | 否 | `"1.5"` | 规范版本号，推荐 `"1.5"` |
+| `header.balance` | String | 否 | 无 | 余额文案（如 `¥12.34`）。提供后显示在标题行供应商名右侧；查不到就不写，界面不占位 |
 | `compact` | Container | 否 | `null` | **收起态**内容定义（单行紧凑容器）。若缺省，系统将自动从 `body` 提取前 2~3 个主要指标智能生成 |
 | `body` | Array | 是 | `[]` | **展开态**卡片主体容器与组件树列表。按钮等交互元素也需放在 `body` 中（见下方 `ActionButton`） |
 

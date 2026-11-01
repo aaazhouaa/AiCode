@@ -45,11 +45,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aicode.core.theme.Radius
 import com.aicode.core.theme.Spacing
+import com.aicode.core.theme.semanticColors
 import com.aicode.R
 import com.aicode.feature.settings.domain.model.AIProviderConfig
 import com.aicode.feature.settings.domain.model.AdaptiveCardAction
@@ -70,6 +72,8 @@ fun ProviderDashboardBar(
     state: ProviderDashboardState,
     onRefresh: () -> Unit,
     maxExpandedBodyHeight: Dp,
+    /** 标题行展示的运行中任务数（终端会话 + 运行中工具 + 子代理）。 */
+    runningTaskCount: Int = 0,
     modifier: Modifier = Modifier,
     forceCollapse: Boolean = false,
     onRefreshByButton: () -> Unit = {},
@@ -205,23 +209,60 @@ fun ProviderDashboardBar(
                             modifier = Modifier.padding(end = Spacing.md)
                         )
 
-                        // 收起状态展示单行卡片摘要
-                        AnimatedVisibility(
-                            visible = !effectiveExpanded,
-                            modifier = Modifier.weight(1f),
-                            enter = fadeIn(tween(180)),
-                            exit = fadeOut(tween(120))
-                        ) {
-                            AdaptiveCardView(
-                                card = card,
-                                isExpanded = false,
-                                onAction = onCardAction,
-                                onRefresh = onRefreshByButton
-                            )
-                        }
-
+                        // 展开态：标题行右侧显示 余额（脚本查到才有）| N 个任务；
+                        // 收起态仍用脚本的 compact 单行摘要。
                         if (effectiveExpanded) {
-                            Spacer(Modifier.weight(1f))
+                            val headerBalance = card.headerBalance
+                            if (headerBalance != null || runningTaskCount > 0) {
+                                Spacer(Modifier.width(Spacing.sm))
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (headerBalance != null) {
+                                        Text(
+                                            text = headerBalance,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.semanticColors.subtleText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (runningTaskCount > 0) {
+                                        if (headerBalance != null) {
+                                            Text(
+                                                text = " | ",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.semanticColors.subtleText
+                                            )
+                                        }
+                                        Text(
+                                            text = stringResource(R.string.dashboard_running_task_count, runningTaskCount),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.semanticColors.warning,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            } else {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        } else {
+                            // 收起状态展示单行卡片摘要
+                            AnimatedVisibility(
+                                visible = true,
+                                modifier = Modifier.weight(1f),
+                                enter = fadeIn(tween(180)),
+                                exit = fadeOut(tween(120))
+                            ) {
+                                AdaptiveCardView(
+                                    card = card,
+                                    isExpanded = false,
+                                    onAction = onCardAction,
+                                    onRefresh = onRefreshByButton
+                                )
+                            }
                         }
 
                         Spacer(Modifier.width(Spacing.sm))
