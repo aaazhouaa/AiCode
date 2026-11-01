@@ -108,9 +108,9 @@ import com.aicode.feature.agent.presentation.AgentUIState
 import com.aicode.feature.agent.presentation.QueuedRequest
 import com.aicode.feature.settings.data.remote.ModelTestResult
 import com.aicode.feature.settings.domain.model.AIProviderConfig
+import com.aicode.feature.settings.domain.model.DashboardTask
 import com.aicode.feature.settings.domain.model.ModelMetadata
 import com.aicode.feature.settings.domain.model.modelMetadataKey
-import com.aicode.feature.settings.domain.model.ProviderDashboardState
 import com.aicode.feature.workspace.presentation.WorkspaceViewModel
 import com.aicode.feature.workspace.presentation.component.WorkspaceIconButton
 import com.aicode.core.ui.ExpandableChevronIcon
@@ -187,11 +187,8 @@ internal fun ChatInputBar(
     onInterjectQueued: (String) -> Unit = {},
     tokenProgress: Float = 0f,
     tokenEstimated: Boolean = false,
-    dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
-    /** 面板标题行展示的运行中任务数（终端会话 + 运行中工具 + 子代理）。 */
-    dashboardRunningTaskCount: Int = 0,
-    onRefreshDashboard: () -> Unit = {},
-    onRefreshDashboardByButton: () -> Unit = {},
+    /** 实时任务列表，供后台任务面板原生渲染（与标题行数量同源）。 */
+    dashboardTasks: List<DashboardTask> = emptyList(),
     onDashboardExpandedChange: (Boolean) -> Unit = {},
     todoItems: List<TodoItem> = emptyList(),
     sessionId: String = "",
@@ -457,13 +454,11 @@ internal fun ChatInputBar(
                 )
             }
 
-            if (activeProvider != null && activeProvider.dashboardScriptPath.isNotBlank()) {
+            // 有运行中后台任务才显示面板（纯原生，不依赖面板脚本）。
+            if (dashboardTasks.isNotEmpty()) {
                 ProviderDashboardBar(
-                    provider = activeProvider,
-                    state = dashboardState,
-                    runningTaskCount = dashboardRunningTaskCount,
-                    onRefresh = onRefreshDashboard,
-                    onRefreshByButton = onRefreshDashboardByButton,
+                    title = stringResource(R.string.dashboard_task_panel_title),
+                    tasks = dashboardTasks,
                     onExpandedChange = onDashboardExpandedChange,
                     maxExpandedBodyHeight = dashboardBodyMaxHeight,
                     forceCollapse = forceCollapseDashboard

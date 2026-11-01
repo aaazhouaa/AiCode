@@ -1864,6 +1864,8 @@
 
     <!-- 自定义面板（ProviderDashboardBar） -->
     <string name="dashboard_fetching">正在加载面板…</string>
+    <string name="dashboard_task_panel_title">后台任务</string>
+    <string name="common_refresh">刷新</string>
     <string name="dashboard_running_task_count">%1$d 个任务</string>
     <string name="dashboard_fetch_failed_retry">加载失败，点击重试</string>
     <string name="dashboard_tap_to_query">点击刷新面板</string>

@@ -93,10 +93,8 @@ import com.aicode.feature.agent.presentation.hasVisibleContent
 import com.aicode.feature.onboarding.domain.OnboardingStep
 import com.aicode.feature.onboarding.presentation.onboardingTarget
 import com.aicode.feature.settings.presentation.SettingsViewModel
-import com.aicode.feature.settings.domain.model.DashboardContext
-import com.aicode.feature.settings.domain.model.ProviderDashboardState
 import com.aicode.feature.settings.domain.model.modelMetadataKey
-import com.aicode.feature.workspace.domain.WorkspacePathMapper
+import com.aicode.feature.workspace.domain.FileAccessProvider
 import com.aicode.feature.workspace.presentation.WorkspaceViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowDown
@@ -702,7 +700,7 @@ fun AIChatPanel(
     val contextUsages by viewModel.contextUsages.collectAsStateWithLifecycle()
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
-    val dashboardRunningTaskCount by viewModel.runningTaskCount.collectAsStateWithLifecycle()
+    val dashboardTasks by viewModel.dashboardTasks.collectAsStateWithLifecycle()
     val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
     val retryState by viewModel.retryState.collectAsStateWithLifecycle()
     val keySwitchState by viewModel.keySwitchState.collectAsStateWithLifecycle()
@@ -918,9 +916,6 @@ fun AIChatPanel(
     val canUploadImages = projectRoot.isNotBlank()
     val reasoningEffort by viewModel.currentSessionReasoningEffort.collectAsStateWithLifecycle()
 
-    val providerDashboards by (settingsViewModel?.providerDashboards?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(emptyMap()) })
-    val currentDashboardState = activeProvider?.let { providerDashboards[it.id] } ?: ProviderDashboardState.Idle
-
     // 键盘弹出时收起面板，避免输入框被挤压
     val imeBottomPx = WindowInsets.ime.getBottom(LocalDensity.current)
     val imeVisible = imeBottomPx > 0
@@ -928,115 +923,10 @@ fun AIChatPanel(
     // 余额/待办面板展开状态：展开时叠加面板联动折叠，避免输入框被双重顶开
     var dashboardExpanded by rememberSaveable { mutableStateOf(false) }
     var todoExpanded by rememberSaveable { mutableStateOf(false) }
-    // ProviderDashboardBar 仅在有面板脚本的 provider 下渲染（见 ChatInputBar）。无该栏时
-    // dashboardExpanded 可能残留 true：面板曾展开后随 provider 切换/脚本移除而卸载，LaunchedEffect
-    // 上报链路中断无法复位，直接拿它做 forceCollapse 会把授权/询问/计划面板永久压成收起态。
+    // 后台任务面板在有运行中任务时渲染（见 ChatInputBar）。无任务时面板卸载，
+    // dashboardExpanded 可能残留 true，直接拿它做 forceCollapse 会把授权/询问/计划面板永久压成收起态。
     // 故叠加可见性，只在面板当前可见且展开时才折叠叠加面板。
-    val dashboardBarVisible = activeProvider?.dashboardScriptPath?.isNotBlank() == true
-    val dashboardCollapseActive = (dashboardExpanded && dashboardBarVisible) || (todoExpanded && currentTodoItems.isNotEmpty())
-
-    fun buildDashboardContext(
-        lastInput: Int = 0,
-        lastOutput: Int = 0,
-        lastCached: Int = 0,
-        refreshReason: String = ""
-    ): DashboardContext {
-        val curSessionId = currentSessionId.orEmpty()
-        val agentStateStr = when (agentState) {
-            is AgentUIState.Idle -> "idle"
-            is AgentUIState.Loading -> "loading"
-            is AgentUIState.Streaming -> "streaming"
-            is AgentUIState.Result -> "result"
-            is AgentUIState.Error -> "error"
-        }
-        // 未显式传最近 token（切会话/任务完成/手动刷新等场景）时，从最后一条含 token 的助手消息兜底：
-        // 否则面板的「最近输入/输出/缓存」会显示 0。llm 事件触发的刷新仍用事件带的实时值（更及时）。
-        val lastTokenMsg = messages.asReversed().firstOrNull {
-            it.role == MessageRole.ASSISTANT && (it.inputTokens > 0 || it.outputTokens > 0)
-        }
-        val effLastInput = if (lastInput > 0) lastInput else (lastTokenMsg?.inputTokens ?: 0)
-        val effLastOutput = if (lastOutput > 0) lastOutput else (lastTokenMsg?.outputTokens ?: 0)
-        val effLastCached = if (lastCached > 0) lastCached else (lastTokenMsg?.cachedInputTokens ?: 0)
-        return DashboardContext(
-            model = activeModel,
-            // 面板脚本在容器内执行，工作区路径必须是容器视角（~/workspace）；宿主真实路径在容器内不存在
-            workspacePath = WorkspacePathMapper.CONTAINER_ROOT,
-            workspaceName = if (projectRoot.isNotBlank()) File(projectRoot).name else "",
-            sessionId = curSessionId,
-            lastInputTokens = effLastInput,
-            lastOutputTokens = effLastOutput,
-            lastCachedTokens = effLastCached,
-            totalInputTokens = currentSession?.totalInputTokens ?: 0,
-            totalOutputTokens = currentSession?.totalOutputTokens ?: 0,
-            modelContextTokens = activeModelMetadata?.contextTokens ?: 0,
-            modelMaxInputTokens = activeModelMetadata?.inputTokens ?: 0,
-            modelMaxOutputTokens = activeModelMetadata?.outputTokens ?: 0,
-            modelInputCostUsdPerM = activeModelMetadata?.inputCostUsdPerM ?: 0.0,
-            modelOutputCostUsdPerM = activeModelMetadata?.outputCostUsdPerM ?: 0.0,
-            modelCacheReadCostUsdPerM = activeModelMetadata?.cacheReadCostUsdPerM ?: 0.0,
-            modelSupportsTools = activeModelMetadata?.supportsTools ?: false,
-            modelSupportsVision = activeModelMetadata?.supportsVision ?: false,
-            modelSupportsReasoning = activeModelMetadata?.supportsReasoning ?: false,
-            messageCount = messages.size,
-            agentState = agentStateStr,
-            sessionMode = currentMode.name.lowercase(),
-            reasoningEffort = reasoningEffort.apiValue,
-            refreshReason = refreshReason,
-            runningTasks = viewModel.dashboardTasks()
-        )
-    }
-
-    // 首次进入、切换提供商、切换脚本路径或切换会话时拉取一次面板。
-    // 会话切换时等 currentSession / messages 都落到新会话（sessionReady）再刷新：
-    // 否则 buildDashboardContext 读到的是切换瞬间的旧会话快照，面板会显示旧数据或空 token。
-    val sessionReady = currentSession?.id == currentSessionId && messagesReady
-    LaunchedEffect(activeProvider?.id, activeProvider?.dashboardScriptPath, currentSessionId, sessionReady) {
-        val provider = activeProvider ?: return@LaunchedEffect
-        if (provider.dashboardScriptPath.isBlank()) return@LaunchedEffect
-        if (!sessionReady) return@LaunchedEffect
-        val context = buildDashboardContext(refreshReason = "session")
-        settingsViewModel?.refreshProviderDashboard(provider, context = context, force = true)
-    }
-
-    // 每次单次 LLM 请求返回时，立即带上最新 Token 与上下文实时刷新面板
-    // 注意：LaunchedEffect(Unit) 只启动一次，collect 闭包会捕获首次组合时的变量快照，
-    // 必须用 rememberUpdatedState 取最新值，否则会话累计 Token/消息数等永远停留在旧值。
-    val latestBuildDashboardContext by rememberUpdatedState(
-        { lastInput: Int, lastOutput: Int, lastCached: Int, refreshReason: String ->
-            buildDashboardContext(lastInput, lastOutput, lastCached, refreshReason)
-        }
-    )
-    val latestActiveProvider by rememberUpdatedState(activeProvider)
-    LaunchedEffect(Unit) {
-        viewModel.llmCallEvents.collect { callEvent ->
-            val provider = latestActiveProvider ?: return@collect
-            if (provider.dashboardScriptPath.isBlank()) return@collect
-            val context = latestBuildDashboardContext(
-                callEvent.inputTokens,
-                callEvent.outputTokens,
-                callEvent.cachedTokens,
-                "llm"
-            )
-            settingsViewModel?.refreshProviderDashboard(provider, context = context, force = true)
-        }
-    }
-
-    // AI 一轮任务完成后刷新面板：让脚本拿到最终 agentState（result/idle/error），
-    // 否则面板状态会一直停在「生成中」。busy→非busy 每轮只发生一次（Result 后再置 Idle 属
-    // 非busy→非busy，不会重复触发），故这里触发的刷新恰好落在最终状态上。
-    var lastAgentStateForPanel by remember { mutableStateOf<AgentUIState?>(null) }
-    LaunchedEffect(agentState) {
-        val prev = lastAgentStateForPanel
-        lastAgentStateForPanel = agentState
-        val wasBusy = prev is AgentUIState.Loading || prev is AgentUIState.Streaming
-        val nowDone = agentState !is AgentUIState.Loading && agentState !is AgentUIState.Streaming
-        if (wasBusy && nowDone) {
-            val provider = latestActiveProvider ?: return@LaunchedEffect
-            if (provider.dashboardScriptPath.isBlank()) return@LaunchedEffect
-            val context = latestBuildDashboardContext(0, 0, 0, "done")
-            settingsViewModel?.refreshProviderDashboard(provider, context = context, force = true)
-        }
-    }
+    val dashboardCollapseActive = (dashboardExpanded && dashboardTasks.isNotEmpty()) || (todoExpanded && currentTodoItems.isNotEmpty())
 
     LaunchedEffect(activeProvider?.type, activeModel) {
         val provider = activeProvider ?: return@LaunchedEffect
@@ -1045,20 +935,6 @@ fun AIChatPanel(
         }
     }
 
-    // 运行中任务数变化（任务开始或结束）时自动重跑一次面板：否则脚本 body 停在旧状态，
-    // 标题行的 N 与展开后的列表不同步——任务已结束仍显示 N 个任务，或任务已开始列表还空着。
-    var lastDashboardTaskCount by remember { mutableStateOf(0) }
-    LaunchedEffect(dashboardRunningTaskCount) {
-        val previous = lastDashboardTaskCount
-        lastDashboardTaskCount = dashboardRunningTaskCount
-        if (previous == dashboardRunningTaskCount) return@LaunchedEffect
-        val provider = latestActiveProvider ?: return@LaunchedEffect
-        if (provider.dashboardScriptPath.isBlank()) return@LaunchedEffect
-        val context = latestBuildDashboardContext(0, 0, 0, "task")
-        settingsViewModel?.refreshProviderDashboard(provider, context = context, force = true)
-    }
-
-    // 主页模型选择面板复用 ModelSelectionSheet，能力 Tag 依赖全量模型元数据；
     // 仅 resolve 当前激活模型会导致未选过的模型无 Tag（设置页进入时已全量加载，主页补齐）。
     // providers 异步加载，首次组合时为空，需等非空后再解析（providers 后续变化也会触发，成本低有缓存）。
     LaunchedEffect(providers) {
@@ -1878,25 +1754,12 @@ fun AIChatPanel(
                 onMoveQueued = { from, to -> viewModel.moveQueuedRequest(from, to) },
                 onEditQueued = { queuedEditing = it },
                 onInterjectQueued = { viewModel.interjectQueuedRequest(it) },
-                dashboardState = currentDashboardState,
-                dashboardRunningTaskCount = dashboardRunningTaskCount,
+                dashboardTasks = dashboardTasks,
                 todoItems = currentTodoItems,
                 sessionId = currentSessionId.orEmpty(),
                 onTodoExpandedChange = { todoExpanded = it },
                 forceCollapseDashboard = pendingPermission != null || pendingQuestion != null || planApproval != null || imeVisible,
                 onDashboardExpandedChange = { dashboardExpanded = it },
-                onRefreshDashboard = {
-                    activeProvider?.let {
-                        val context = buildDashboardContext(refreshReason = "manual")
-                        settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
-                    }
-                },
-                onRefreshDashboardByButton = {
-                    activeProvider?.let {
-                        val context = buildDashboardContext(refreshReason = "button")
-                        settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
-                    }
-                },
                 tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null),
                 tokenProgress = run {
                     val contextLimit = activeModelMetadata?.let {

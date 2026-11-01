@@ -899,27 +899,25 @@ class AIAgentViewModel @Inject constructor(
     /** 面板任务耗时起点：key = kind:id。任务从列表消失后清掉，避免无界增长。 */
     private val dashboardTaskStartedAt = mutableMapOf<String, Long>()
 
-    /** 面板标题行展示的「N 个任务」：终端运行中标签 + 当前会话运行中工具 + 运行中子代理。 */
-    val runningTaskCount: StateFlow<Int> = combine(
-        runningTool,
-        subAgentCards,
-        terminalSessionProvider.tabsFlow
-    ) { tools, subs, tabs ->
-        tools.size + subs.values.count { it.status == SubAgentCardStatus.RUNNING } + tabs.count { it.running }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    /** 面板计时的秒级 tick：有运行中任务时每秒前进一次，无任务停。纯内存重算，不重跑脚本。 */
+    private val dashboardClock = MutableStateFlow(System.currentTimeMillis())
 
     /**
-     * 面板用的后台任务快照：终端会话、当前会话运行中的工具、运行中的子代理。
-     *
-     * 不给脚本扫 `ps`：容器里 PRoot 下的 /proc 信息不完整，也分不清哪些是用户任务、
-     * 哪些是 App 自己的调用链。耗时从 App 首次观察到该任务起算（重启后任务本就中断，不必持久化）。
+     * 面板用的实时后台任务列表：终端运行中标签 + 当前会话运行中工具 + 运行中子代理。
+     * 与 [runningTaskCount] 同源（同一组 Flow），保证列表与数量永远一致，不再依赖脚本快照。
+     * [dashboardClock] 每秒推进，让每个任务的 [DashboardTask.elapsedSec] 实时走动，
+     * 且各任务用各自 [dashboardTaskStartedAt] 起点互不影响。
      */
-    fun dashboardTasks(): List<DashboardTask> {
-        val now = System.currentTimeMillis()
+    val dashboardTasks: StateFlow<List<DashboardTask>> = combine(
+        runningTool,
+        subAgentCards,
+        terminalSessionProvider.tabsFlow,
+        dashboardClock
+    ) { tools, subs, tabs, now ->
         val tasks = mutableListOf<DashboardTask>()
         val alive = mutableSetOf<String>()
 
-        terminalSessionProvider.listTabs().filter { it.running }.forEach { tab ->
+        tabs.filter { it.running }.forEach { tab ->
             val key = "terminal:${tab.id}"
             alive += key
             val startedAt = dashboardTaskStartedAt.getOrPut(key) { now }
@@ -931,7 +929,7 @@ class AIAgentViewModel @Inject constructor(
             )
         }
 
-        runningTool.value.forEach { tool ->
+        tools.forEach { tool ->
             val key = "tool:${tool.messageId}"
             alive += key
             val startedAt = dashboardTaskStartedAt.getOrPut(key) { now }
@@ -943,19 +941,42 @@ class AIAgentViewModel @Inject constructor(
             )
         }
 
-        subAgentCards.value.values
-            .filter { it.status == SubAgentCardStatus.RUNNING }
-            .forEach { card ->
-                tasks += DashboardTask(
-                    kind = "subagent",
-                    title = card.agentName ?: card.title.ifBlank { "子代理" },
-                    detail = card.excerpt.orEmpty(),
-                    elapsedSec = (card.elapsedMs ?: 0L) / 1000
-                )
-            }
+        subs.values.filter { it.status == SubAgentCardStatus.RUNNING }.forEach { card ->
+            tasks += DashboardTask(
+                kind = "subagent",
+                title = card.agentName ?: card.title.ifBlank { "子代理" },
+                detail = card.excerpt.orEmpty(),
+                elapsedSec = (card.elapsedMs ?: 0L) / 1000
+            )
+        }
 
         dashboardTaskStartedAt.keys.retainAll(alive)
-        return tasks
+        tasks
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** 面板标题行展示的「N 个任务」。 */
+    val runningTaskCount: StateFlow<Int> = dashboardTasks
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    /** 有运行中任务时每秒推进 [dashboardClock]，无任务时停止。 */
+    init {
+        viewModelScope.launch {
+            var tickJob: Job? = null
+            runningTaskCount.collect { count ->
+                if (count > 0 && tickJob == null) {
+                    tickJob = launch {
+                        while (true) {
+                            dashboardClock.value = System.currentTimeMillis()
+                            delay(1000)
+                        }
+                    }
+                } else if (count == 0) {
+                    tickJob?.cancel()
+                    tickJob = null
+                }
+            }
+        }
     }
 
     /** 工具名 → 面板上的人类可读名称，认不出的原样返回。 */

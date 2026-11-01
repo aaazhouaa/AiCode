@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -269,9 +270,9 @@ class TerminalSessionManager @Inject constructor(
     /** 列出全部标签的摘要（id/标题/是否后台/运行状态/命令），供 AI 选目标。 */
     override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
 
-    override val tabsFlow: StateFlow<List<TabInfo>> = tabs
-        .map { list -> list.map { it.toTabInfo() } }
-        .stateIn(monitorScope, SharingStarted.Eagerly, emptyList())
+    override val tabsFlow: StateFlow<List<TabInfo>> = combine(tabs, revision) { list, _ ->
+        list.map { it.toTabInfo() }
+    }.stateIn(monitorScope, SharingStarted.Eagerly, emptyList())
 
     /** 切换当前标签。 */
     fun activate(id: String) {
