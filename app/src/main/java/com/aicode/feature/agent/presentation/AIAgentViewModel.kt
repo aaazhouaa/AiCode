@@ -909,17 +909,15 @@ class AIAgentViewModel @Inject constructor(
      * 且各任务用各自 [dashboardTaskStartedAt] 起点互不影响。
      */
     val dashboardTasks: StateFlow<List<DashboardTask>> = combine(
-        runningTool,
+        _runningTools,
         subAgentCards,
         terminalSessionProvider.tabsFlow,
         dashboardClock
-    ) { tools, subs, tabs, now ->
+    ) { runningTools, subs, tabs, now ->
         val tasks = mutableListOf<DashboardTask>()
-        val alive = mutableSetOf<String>()
 
         tabs.filter { it.running }.forEach { tab ->
             val key = "terminal:${tab.id}"
-            alive += key
             val startedAt = dashboardTaskStartedAt.getOrPut(key) { now }
             tasks += DashboardTask(
                 kind = "terminal",
@@ -929,16 +927,21 @@ class AIAgentViewModel @Inject constructor(
             )
         }
 
-        tools.forEach { tool ->
-            val key = "tool:${tool.messageId}"
-            alive += key
-            val startedAt = dashboardTaskStartedAt.getOrPut(key) { now }
-            tasks += DashboardTask(
-                kind = "tool",
-                title = toolDisplayName(tool.toolName),
-                detail = tool.toolArgs,
-                elapsedSec = ((now - startedAt).coerceAtLeast(0)) / 1000
-            )
+        // 用全局 _runningTools（所有会话）而非 runningTool（仅当前会话）：
+        // 否则切换会话会让后台任务从面板里消失，切回后因起点被清而重新计时。
+        runningTools.forEach { (toolSessionId, tools) ->
+            tools.values.forEach { tool ->
+                // 起点在 setRunningTool 首次出现时已记录；这里只读。
+                // key 用工具真实所属会话 id（外层 map key），与 setRunningTool 记录时一致。
+                val key = "tool:$toolSessionId:${tool.messageId}"
+                val startedAt = dashboardTaskStartedAt[key] ?: now
+                tasks += DashboardTask(
+                    kind = "tool",
+                    title = toolDisplayName(tool.toolName, tool.toolArgs),
+                    detail = tool.toolArgs,
+                    elapsedSec = ((now - startedAt).coerceAtLeast(0)) / 1000
+                )
+            }
         }
 
         subs.values.filter { it.status == SubAgentCardStatus.RUNNING }.forEach { card ->
@@ -950,7 +953,12 @@ class AIAgentViewModel @Inject constructor(
             )
         }
 
-        dashboardTaskStartedAt.keys.retainAll(alive)
+        // 只清理 terminal 前缀的残留（tool 前缀由 removeRunningTool 管，subagent 不落此 map）。
+        // terminal 的 tab id 全局唯一，跨会话不串；tab 结束（不再 running）时清掉起点。
+        val terminalKeys = tabs.filter { it.running }.map { "terminal:${it.id}" }.toSet()
+        dashboardTaskStartedAt.keys.retainAll { key ->
+            !key.startsWith("terminal:") || key in terminalKeys
+        }
         tasks
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -980,8 +988,9 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /** 工具名 → 面板上的人类可读名称，认不出的原样返回。 */
-    private fun toolDisplayName(toolName: String): String = when (toolName) {
-        "Bash" -> "执行命令"
+    /** 工具名 + 参数 → 面板上的人类可读名称。Bash 按命令内容识别，其余按工具名。 */
+    private fun toolDisplayName(toolName: String, args: String = ""): String = when (toolName) {
+        "Bash" -> describeBashCommand(args)
         "terminal" -> "终端任务"
         "readFile" -> "读取文件"
         "writeFile" -> "写入文件"
@@ -1001,14 +1010,36 @@ class AIAgentViewModel @Inject constructor(
         else -> toolName.ifBlank { "工具调用" }
     }
 
-    /** 添加/更新一个运行中工具（按 msgId 定位，支持多个工具并行）。 */
+    /** 按 Bash 命令内容识别任务名（构建/测试/安装等），识别不出回退「执行命令」。 */
+    private fun describeBashCommand(args: String): String {
+        val cmd = args.trim()
+        if (cmd.isEmpty()) return "执行命令"
+        return when {
+            Regex("assemble\\w*|bundle\\w*|gradlew|\\bgradle\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
+            Regex("\\bpip3?\\s+install\\b|\\bpoetry\\b|\\bconda\\b|\\buv\\s+pip\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "安装依赖"
+            Regex("\\b(npm|pnpm|yarn)\\s+(install|add|ci)\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "安装依赖"
+            Regex("\\bgit\\s+(clone|fetch|pull|push)\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "Git 同步"
+            Regex("\\bpytest\\b|\\bjest\\b|\\bvitest\\b|go\\s+test|unittest", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "测试"
+            Regex("\\bvite\\b|\\bwebpack\\b|\\besbuild\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
+            Regex("\\bcargo\\s+(build|test|run)\\b|\\brustc\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
+            Regex("\\bmake\\b|\\bcmake\\b|\\bninja\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
+            else -> "执行命令"
+        }
+    }
+
+    /** 添加/更新一个运行中工具（按 msgId 定位，支持多个工具并行）。首次出现时记录计时起点。 */
     private fun setRunningTool(sessionId: String, msgId: String, tool: RunningToolOutput) {
+        val key = "tool:$sessionId:$msgId"
+        if (key !in dashboardTaskStartedAt) {
+            dashboardTaskStartedAt[key] = System.currentTimeMillis()
+        }
         val sessionTools = _runningTools.value[sessionId] ?: emptyMap()
         _runningTools.value = _runningTools.value + (sessionId to (sessionTools + (msgId to tool)))
     }
 
-    /** 移除一个运行中工具；会话无剩余运行工具时清除该会话条目。 */
+    /** 移除一个运行中工具；会话无剩余运行工具时清除该会话条目。同时清掉计时起点。 */
     private fun removeRunningTool(sessionId: String, msgId: String) {
+        dashboardTaskStartedAt.remove("tool:$sessionId:$msgId")
         val sessionTools = _runningTools.value[sessionId] ?: return
         val updated = sessionTools - msgId
         _runningTools.value = if (updated.isEmpty()) {

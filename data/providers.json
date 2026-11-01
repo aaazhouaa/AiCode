@@ -88,55 +88,5 @@
     "badge": null,
     "websiteUrl": null,
     "tags": []
-  },
-  {
-    "id": "xiaomi",
-    "name": "MiMo",
-    "type": "OPENAI",
-    "baseUrl": "https://api.xiaomimimo.com/v1",
-    "isRecommended": false,
-    "badge": null,
-    "websiteUrl": "https://platform.xiaomimimo.com?ref=66QSUD",
-    "tags": [
-      "注册送10元",
-      "需实名"
-    ]
-  },
-  {
-    "id": "aicode",
-    "name": "AiCode",
-    "type": "OPENAI",
-    "baseUrl": "https://ai.murk.top/v1",
-    "isRecommended": true,
-    "badge": null,
-    "websiteUrl": "https://ai.murk.top",
-    "tags": [
-      "签到领额度"
-    ]
-  },
-  {
-    "id": "siliconflow",
-    "name": "SiliconFlow",
-    "type": "OPENAI",
-    "baseUrl": "https://api.siliconflow.cn/v1",
-    "isRecommended": false,
-    "badge": null,
-    "websiteUrl": "https://cloud.siliconflow.cn/i/HNDIQWXd",
-    "tags": [
-      "注册送16元",
-      "需实名"
-    ]
-  },
-  {
-    "id": "qiniu",
-    "name": "七牛云 AI",
-    "type": "OPENAI",
-    "baseUrl": "https://api.qnaigc.com/v1",
-    "isRecommended": false,
-    "badge": null,
-    "websiteUrl": "https://s.qiniu.com/vUryau",
-    "tags": [
-      "注册送300万Token"
-    ]
   }
 ]

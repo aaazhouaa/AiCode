@@ -15,6 +15,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -855,6 +856,17 @@ fun AIChatPanel(
     // 「执行完毕自动收起过程」开关时的最新一轮。
     val collapseFinishedTurn by viewModel.collapseFinishedTurn.collectAsStateWithLifecycle()
     val lastTurnKey = messages.lastOrNull()?.let { stableTurnKeys[it.id] }
+    // 收工下降沿兜底：用户在别处浏览时 agent 恰好收工，滚动动作若落在 isBusy 翻转之后，
+    // browsingTurnKey 没机会记录（onUserLeaveBottom 只在 isBusy 时记录），这一轮仍会被折叠、
+    // 视口跟着错位。这里在收工那一刻补记：只要收工时用户不在底部，就锁存最新一轮保持展开，
+    // 直到回到底部。用锁存而非持续读 followBottom，避免收工后再滑动把已折叠的轮次又顶开。
+    var wasBusy by remember(currentSessionId) { mutableStateOf(false) }
+    LaunchedEffect(isBusy) {
+        if (wasBusy && !isBusy && !followBottom && browsingTurnKey == null) {
+            browsingTurnKey = lastTurnKey
+        }
+        wasBusy = isBusy
+    }
     val keepExpandedTurnKey = if (!collapseFinishedTurn) lastTurnKey else browsingTurnKey
     // 长会话里重建整张列表要遍历全部消息（拆轮、分组、拆块），在主线程上做会卡住每次落库与补载历史。
     // 超过阈值后改在后台算，算完前继续显示上一版（LazyColumn 与它的条数一直自洽）；
@@ -1561,7 +1573,18 @@ fun AIChatPanel(
                         )
                     ) {
                         itemsIndexed(chatItems, key = { _, item -> item.key }, contentType = { _, item -> item.contentType }) { _, item ->
-                            RenderChatItem(item)
+                            // 整轮折叠/展开时过程项按 key 增删：placement 动画让下方内容（结果气泡、
+                            // 后续轮）平滑上移，而不是瞬间跳位。fadeIn/fadeOut 置 null——入场已由
+                            // entryDelayMs 的 draw 阶段动画负责，淡出会与贴底校准争抢视口计算。
+                            Box(
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = null,
+                                    placementSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                                    fadeOutSpec = null,
+                                )
+                            ) {
+                                RenderChatItem(item)
+                            }
                         }
                         val reasoning = displayStreamingReasoning
                         val showReasoning = reasoning?.hasVisibleContent() == true
