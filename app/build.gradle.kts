@@ -88,7 +88,7 @@ val syncAiDocs = tasks.register<Sync>("syncAiDocs") {
 android {
     namespace = "com.aicode"
     compileSdk = 36
-    buildToolsVersion = "35.0.0"
+    buildToolsVersion = "36.0.0"
 
     signingConfigs {
         create("release") {
@@ -121,48 +121,32 @@ android {
         }
     }
 
-    // 按容器镜像拆包：universal 同时含 arm + x86 两套 Alpine rootfs/proot（兼容所有设备但体积大），
-    // armsolo 仅含 arm（对应 arm64-v8a），x86solo 仅含 x86（对应 x86_64）
-    // ——单架构包体积约为通用包的一半。assets/container/... 由各 flavor 的 sourceSet 提供，
-    // ContainerInstaller.ASSET_DIR 在 universal 下按设备 ABI 选其一，在 solo 包里只剩一套故一定命中。
+    // 只出 arm64-v8a 单包：容器镜像与 proot 只打包 arm 那一套。
+    // 保留单 flavor（而不是删掉维度）是为了让变体名 armsoloDebug / armsoloRelease、产物名
+    // app-armsolo-release.apk 与既有 CI 脚本、下载命名继续一致；其他架构的设备装上后由
+    // ContainerInstaller 报错，而不会静默加载错架构的镜像。
     //
-    // 注意：defaultConfig 不再固定 abiFilters，改由各 flavor 维度决定；universal 默认含全部
-    // 依赖的 ABI（arm64-v8a + x86_64），单架构包各自收敛到单一 ABI，避免错架构设备加载错误的镜像。
+    // 合并上游时注意：上游仍带 universal / x86solo 两个 flavor 与 src/_x86Assets、
+    // src/_x86JniLibs 目录，合并若把它们捎带回来，一律按本节删掉，不要恢复。
     flavorDimensions += "container"
     productFlavors {
-        create("universal") {
-            dimension = "container"
-            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
-        }
         create("armsolo") {
             dimension = "container"
             ndk { abiFilters += "arm64-v8a" }
         }
-        create("x86solo") {
-            dimension = "container"
-            ndk { abiFilters += "x86_64" }
-        }
     }
 
-    // 容器镜像按 flavor 共享 sourceSet：
-    //   _armAssets 仅物理一份 arm 镜像，由 universal + armsolo 共享
-    //   _x86Assets 仅物理一份 x86 镜像，由 universal + x86solo 共享
-    // 这样单架构包天然只含一套镜像（AGP 资源并集合并：未被引用的目录不参与），
-    // universal 含两套；镜像二进制在仓库里也只各一份，无重复。
-    // 放弃 ignoreAssetsPattern=dir:x86：实测对 container/x86 整树无效（rc1 已证实）。
+    // 容器镜像与 proot 走 sourceSet 注入：
+    //   _armAssets 是 arm 镜像，_armJniLibs 是 proot 全套（仓库里各只有一份物理文件）。
+    // x86 那两套（_x86Assets / _x86JniLibs）已删除，合并上游时不要重新引回。
     // proot 全套（proot 本体 + 两个 loader + libtalloc/libandroid-shmem）走 jniLibs 而非 assets：
     // 安装器只把 APK 内 lib/<abi>/lib*.so 解压到 nativeLibraryDir，而那是 App 目录里唯一
     // 允许 execve 的位置（SELinux 标签 apk_data_file）。rootfs 仍在 assets→filesDir——
     // 客户机二进制不由内核 execve，而是 proot 的 loader 用 mmap(PROT_EXEC) 映射进内存，
     // 不受 W^X 约束。故命名必须是 lib*.so（libproot-loader32.so 实为 32 位 ELF，同样有效）。
     sourceSets {
-        getByName("universal") { assets.srcDir("src/_armAssets") }
-        getByName("universal") { assets.srcDir("src/_x86Assets") }
         getByName("armsolo") { assets.srcDir("src/_armAssets") }
-        getByName("x86solo") { assets.srcDir("src/_x86Assets") }
-        getByName("universal") { jniLibs.srcDirs("src/_armJniLibs", "src/_x86JniLibs") }
         getByName("armsolo") { jniLibs.srcDir("src/_armJniLibs") }
-        getByName("x86solo") { jniLibs.srcDir("src/_x86JniLibs") }
         // 文档不放在 app/src/main/assets 下，改由 syncAiDocs 从 docs-site/docs 生成后并入
         getByName("main") { assets.srcDir(aiDocsGeneratedDir) }
     }
@@ -272,14 +256,14 @@ android {
 
     // 迁移测试（MigrationTestHelper）在 Robolectric 下从合并后的 assets 读 Room 导出的 schema，
     // 路径为 <databaseClass 全限定名>/<version>.json；AGP 不会把 unit test sourceSet 的 assets
-    // 合并进 Robolectric 的 assets（test_config.properties 指向 mergeUniversalDebugAssets），
-    // 故挂在 debug 变体上：迁移测试只跑 universalDebug，release 包不会带上 schema。
+    // 合并进 Robolectric 的 assets（test_config.properties 指向 mergeArmsoloDebugAssets），
+    // 故挂在 debug 变体上：迁移测试只跑 armsoloDebug，release 包不会带上 schema。
     sourceSets {
         getByName("debug").assets.srcDir("$projectDir/schemas")
     }
 }
 
-// 彻底禁用 lintVital<Flavor>Release 任务（三 flavor 各一个），
+// 彻底禁用 lintVital<Flavor>Release 任务（单 flavor 一个），
 // 使其不进入 assembleRelease 的任务图——比 lint.checkReleaseBuilds=false 更省构建开销与内存。
 // 仅在 release 任务图执行前禁用，避免影响开发期 debug lint。
 gradle.projectsEvaluated {

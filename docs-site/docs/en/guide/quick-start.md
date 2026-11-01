@@ -9,19 +9,13 @@ From installation to your first AI conversation.
 
 ## Download & Install
 
-Download from [GitHub Releases](https://github.com/jieapi/aicode/releases/latest). Pick the package that fits your device:
+Download `aicode-arm64-<version>.apk` from [GitHub Releases](https://github.com/jieapi/aicode/releases/latest) — arm64-v8a only, which covers the vast majority of phones and tablets.
 
-| Package | Best for |
-| --- | --- |
-| `armsolo` | Real devices (arm64), smallest size |
-| `x86solo` | Emulators and Chromebooks (x86_64) |
-| `universal` | Both architectures in one package, larger size |
-
-::: warning Pick the right architecture
-A mismatched architecture will break the built-in container. If you are not sure, use `universal`.
+::: warning arm64 devices only
+This release ships an arm64-v8a package only — no x86_64, no 32-bit. x86 emulators and Chromebooks cannot run the built-in container.
 :::
 
-Tip: you can also tap "Download APK" on the [homepage](/en/), which fetches the latest stable `universal` package through an accelerated mirror (falls back to the GitHub link automatically if the mirror is unavailable).
+Tip: you can also tap "Download APK" on the [homepage](/en/), which fetches the latest stable package through an accelerated mirror (falls back to the GitHub link automatically if the mirror is unavailable).
 
 ## 1. First Launch & Onboarding Guide
 

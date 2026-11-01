@@ -255,10 +255,9 @@ class ContainerInstaller @Inject constructor(
     val ASSET_DIR: String
         get() {
             // 优先按设备 ABI 选对应镜像目录。
-            // 但 release 包按 flavor 拆分后，单架构包只含一套镜像（armsolo→arm、x86solo→x86）：
-            // 若该套不在 assets 里（例如 armsolo 包被装到只报 x86 的设备），下面会 fallback
-            // 到实际存在的那套，避免 open() 直接崩溃——proot 能否真正运行由设备 ABI 决定，
-            // 但至少 asset 查找层不会挂。
+            // 包内只打一套镜像（arm）：若它不在 assets 里（例如装到只报 x86 的设备），
+            // 下面会 fallback 到实际存在的那套，避免 open() 直接崩溃——proot 能否真正运行
+            // 仍由设备 ABI 决定，但至少 asset 查找层不会挂。
             val preferX86 = android.os.Build.SUPPORTED_ABIS.any { it.contains("x86") }
             val first = if (preferX86) "container/x86" else "container/arm"
             val fallback = if (preferX86) "container/arm" else "container/x86"

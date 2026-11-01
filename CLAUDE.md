@@ -21,14 +21,14 @@
 
 | 用途 | 命令 |
 | --- | --- |
-| 冒烟编译（日常默认） | `./gradlew :app:assembleUniversalDebug` |
-| 推送前单测 | `./gradlew :app:testUniversalDebugUnitTest` |
+| 冒烟编译（日常默认） | `./gradlew :app:assembleArmsoloDebug` |
+| 推送前单测 | `./gradlew :app:testArmsoloDebugUnitTest` |
 | 推送前迁移对账 | `python3 scripts/check_migrations.py`（或 `./gradlew checkMigrations`） |
 | 发版构建 APK / AAB | `./gradlew assembleRelease` / `./gradlew bundleRelease` |
 
-- **别用聚合任务做日常验证**：`assembleDebug` / `assembleRelease` / `test` / `build` 都会跨三个 flavor 全跑，耗时极长。
-- 产物：`app/build/outputs/apk/<flavor>/release/app-<flavor>-release.apk`、`.../bundle/<flavor>/release/app-<flavor>-release.aab`。
-- flavor 按 ABI 拆分：`universal`（arm64-v8a + x86_64）、`armsolo`（仅 arm64-v8a）、`x86solo`（仅 x86_64）。
+- **别用聚合任务做日常验证**：`assembleDebug` / `assembleRelease` / `test` / `build` 会跑完全部变体，耗时极长。
+- 产物：`app/build/outputs/apk/armsolo/release/app-armsolo-release.apk`、`.../bundle/armsolo/release/app-armsolo-release.aab`。
+- flavor 只有 `armsolo`（仅 arm64-v8a）。**只发 arm64 包**：合并上游时若带回 `universal` / `x86solo` flavor 或 `app/src/_x86Assets`、`app/src/_x86JniLibs`，一律删除、不要恢复；发版资产名固定 `aicode-arm64-<tag>.apk`。
 - release 签名凭据读 `app/keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`）；本地通常不存放签名文件，CI 从 GitHub secret 还原到 `app/aicode.jks`。
 - **`targetSdk` 锁定 28**（`minSdk = 26`）：PRoot 需在 App 可写目录执行二进制，Android 10+ 的 W^X / SELinux 禁止该行为，别升。
 

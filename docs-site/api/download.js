@@ -1,5 +1,5 @@
-// 「下载 APK」直链端点：302 到最新正式版 Release 的 universal APK。
-// 资产名格式 aicode-universal-<tag>.apk 由 .github/workflows/android-release.yml 的 Rename 步骤决定，改名时这里要同步。
+// 「下载 APK」直链端点：302 到最新正式版 Release 的 arm64 APK。
+// 资产名格式 aicode-arm64-<tag>.apk 由 .github/workflows/android-release.yml 的 Rename 步骤决定，改名时这里要同步。
 const REPO = 'jieapi/aicode'
 const LATEST_PAGE = `https://github.com/${REPO}/releases/latest`
 // 国内直连 GitHub 下载资产常常龟速，默认套一层 gh-proxy 镜像；镜像探测不通（下线/故障）时退回 GitHub 原链。
@@ -32,7 +32,7 @@ async function resolveApkUrl() {
   const tag = page.headers.get('location')?.match(/\/releases\/tag\/([^/?#]+)$/)?.[1]
   if (!tag) return null
 
-  const githubUrl = `https://github.com/${REPO}/releases/download/${tag}/aicode-universal-${tag}.apk`
+  const githubUrl = `https://github.com/${REPO}/releases/download/${tag}/aicode-arm64-${tag}.apk`
   if (await reachable(MIRROR_PREFIX + githubUrl)) return MIRROR_PREFIX + githubUrl
   return (await reachable(githubUrl)) ? githubUrl : null
 }

@@ -5,6 +5,7 @@ plugins {
 android {
     namespace = "com.termux.terminal"
     compileSdk = 36
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         minSdk = 26

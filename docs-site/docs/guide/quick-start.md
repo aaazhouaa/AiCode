@@ -9,19 +9,13 @@
 
 ## 下载安装
 
-从 [GitHub Releases](https://github.com/jieapi/aicode/releases/latest) 下载，三个包按设备选择：
+从 [GitHub Releases](https://github.com/jieapi/aicode/releases/latest) 下载 `aicode-arm64-<版本>.apk`（仅 arm64-v8a，覆盖绝大多数手机与平板）。
 
-| 包名 | 适用场景 |
-| --- | --- |
-| `armsolo` | 真机（arm64 设备），体积最小 |
-| `x86solo` | 模拟器、Chromebook（x86_64） |
-| `universal` | 通用包，同时含两种架构，体积较大 |
-
-::: warning 架构要选对
-架构不匹配会导致内置容器无法运行。不确定时使用 `universal`。
+::: warning 仅支持 arm64 设备
+当前版本只提供 arm64-v8a 包，不含 x86_64，也不支持 32 位设备。x86 模拟器与 Chromebook 无法运行内置容器。
 :::
 
-推荐直接点击[文档站首页](/)的「下载 APK」，将通过加速镜像直接下载最新正式版的 `universal` 通用包（镜像不可用时自动回退至 GitHub 原链）。
+推荐直接点击[文档站首页](/)的「下载 APK」，将通过加速镜像直接下载最新正式版包（镜像不可用时自动回退至 GitHub 原链）。
 
 ## 1. 配置 AI 供应商
 

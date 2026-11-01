@@ -101,8 +101,8 @@ There is nothing to set up beforehand: install the app, configure a model under 
 
 | Item | Description |
 |------|-------------|
-| System requirements | Android 8.0+ (API 26), arm64-v8a / x86_64 |
-| Download | [GitHub Releases](https://github.com/jieapi/aicode/releases/latest): pick `armsolo` for real devices, `x86solo` for emulators, `universal` for both |
+| System requirements | Android 8.0+ (API 26), arm64-v8a |
+| Download | [GitHub Releases](https://github.com/jieapi/aicode/releases/latest): get `aicode-arm64-<version>.apk` (arm64 devices only) |
 | Quick start | Settings → AI Vendors to add a model → Container & Images to pick local or SSH → new session and chat |
 | Changelog | [Releases](https://github.com/jieapi/aicode/releases) (all versions & notes) |
 | User guide | [Online docs](https://aicode.murk.top): quick start, user manual and advanced guides (same content as the in-app docs) |
