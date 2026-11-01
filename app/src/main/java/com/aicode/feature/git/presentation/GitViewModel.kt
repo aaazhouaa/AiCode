@@ -2,6 +2,7 @@ package com.aicode.feature.git.presentation
 
 import android.content.Context
 import android.content.res.Configuration
+import android.os.SystemClock
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -135,9 +136,10 @@ class GitViewModel @Inject constructor(
 
     init { refresh() }
 
-    /** 仓库快照：并发拉取 status/graph/remote（+可选 identity）的结果。不含全量分支/标签——
-     * 那些在 [refresh] 成功后异步拉取（[loadBranches]），避免阻塞首屏。
-     * graph 的 refs 标注只用本地分支（[repository.localRefsOnly]，亚秒级），远程/标签标注由 [loadBranches] 补全。 */
+    /** 上次成功加载全量分支/标签的时间（切回「分支」页超过一段时间就重拉）。 */
+    private var branchesLoadedAt = 0L
+
+    /** 写操作后的整体刷新结果：status 与 graph 必须一起返回，避免列表与工作区状态短暂不一致。 */
     private data class RepoSnapshot(
         val status: GitStatus,
         val graph: GitGraph,
@@ -173,8 +175,14 @@ class GitViewModel @Inject constructor(
     fun setTab(tab: GitTab) {
         _state.update { it.copy(tab = tab) }
         // 兜底：进入页面即已异步加载；若尚未开始/完成（如加载失败后重进），切 tab 时再补一次。
-        if (tab == GitTab.BRANCHES && !_state.value.branchesLoaded && !_state.value.branchesLoading) {
-            loadBranches()
+        // 已加载过但超过 30 秒，重新拉一次——分支/标签可能在终端里变过。
+        if (tab == GitTab.BRANCHES && !_state.value.branchesLoading) {
+            val loaded = _state.value.branchesLoaded
+            val stale = loaded && SystemClock.elapsedRealtime() - branchesLoadedAt > 30_000L
+            if (!loaded || stale) {
+                if (stale) _state.update { it.copy(branchesLoaded = false) }
+                loadBranches()
+            }
         }
     }
 
@@ -189,12 +197,17 @@ class GitViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val allRefs = repository.loadAllRefs()
-                // 用全量 refs 更新 graph 标注（远程分支+标签补全）。
-                val graph = repository.graphAppend(_state.value.graph.commits, allRefs.refsByCommit)
+                // 只重算 refs 标注，不能再调 graphAppend：那会按已加载条数 skip 再拉一整页提交。
+                val graph = repository.rebuildGraph(
+                    commits = _state.value.graph.commits,
+                    refs = allRefs.refsByCommit,
+                    hasMore = _state.value.graph.hasMore
+                )
                 val commits = graph.toGitCommits()
                 _state.update {
                     it.copy(branches = allRefs.branches, tags = allRefs.tags, graph = graph, commits = commits, branchesLoading = false, branchesLoaded = true)
                 }
+                branchesLoadedAt = SystemClock.elapsedRealtime()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "加载分支列表失败", e)
@@ -219,14 +232,27 @@ class GitViewModel @Inject constructor(
         }
     }
 
-    fun refresh() {
+    /**
+     * 进入页面时调用：已有数据就静默刷新（列表原地保留、不回到全屏 loading），没有数据才显示 loading。
+     * 提交记录与工作区状态每次都重新读——文件变动、新提交必须进来就能看到，不能靠缓存混过去。
+     */
+    fun onEnterPage() {
+        val s = _state.value
+        // 首次由 init 触发的刷新还在跑，不重复叠一次。
+        if (s.loading) return
+        if (s.commits.isNotEmpty()) refresh(silent = true) else refresh()
+    }
+
+    fun refresh(silent: Boolean = false) {
         if (_state.value.busy) return
         // 容器未就绪时不执行 git 命令，直接提示用户去终端页完成初始化，避免误显示"非 Git 仓库"。
         repository.notReadyHint()?.let { hint ->
             _state.update { it.copy(loading = false, toast = hint) }
             return
         }
-        _state.update { it.copy(loading = true, toast = null) }
+        // 静默刷新且已有内容时不显示全屏 loading，列表原地保留。
+        val showLoading = !silent || _state.value.commits.isEmpty()
+        _state.update { it.copy(loading = showLoading, toast = null) }
         viewModelScope.launch {
             try {
                 // 发现工作区里的 git 仓库（根 + 一层子目录），选中当前或默认仓库。
@@ -241,13 +267,38 @@ class GitViewModel @Inject constructor(
                     _state.update { it.copy(loading = false, notARepo = true, repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = null) }
                     return@launch
                 }
-                val snap = loadSnapshot(includeIdentity = true)
-                val commits = snap.graph.toGitCommits()
+                // 提交列表与仓库元信息先行：status 是大仓库里唯一可能上秒的命令，不该让提交记录等它。
+                val localRefs = repository.localRefsOnly()
+                val graph = repository.graph(refs = localRefs)
+                val commits = graph.toGitCommits()
+                val hasRemote = repository.hasRemote()
+                val hasIdentity = repository.getUserName().isNotBlank()
+                // 换了仓库才清分支/标签缓存；同仓库重进沿用，避免每次进页面都跑全量 for-each-ref。
+                val repoChanged = effectiveRepo != _state.value.currentRepo
                 _state.update {
-                    it.copy(loading = false, notARepo = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, hasIdentity = snap.hasIdentity, untrackedDirFiles = snap.untrackedDirFiles, branchesLoaded = false, branchesLoading = false, branches = emptyList(), tags = emptyList(), repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo)
+                    it.copy(
+                        loading = false, notARepo = false, commits = commits, graph = graph,
+                        hasRemote = hasRemote, hasIdentity = hasIdentity,
+                        branchesLoaded = if (repoChanged) false else it.branchesLoaded,
+                        branchesLoading = if (repoChanged) false else it.branchesLoading,
+                        branches = if (repoChanged) emptyList() else it.branches,
+                        tags = if (repoChanged) emptyList() else it.tags,
+                        repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo
+                    )
                 }
                 // 页面已打开：后台拉取全量分支/标签，用户切到 BRANCHES tab 时无需再等。
                 loadBranches()
+                // status 后台补：工作区改动与未跟踪目录展开态就绪后单独更新，状态页短暂为空属预期。
+                launch {
+                    runCatching { repository.status() }
+                        .onSuccess { status ->
+                            _state.update { it.copy(status = status, untrackedDirFiles = reloadExpandedUntrackedDirs(status)) }
+                        }
+                        .onFailure { e ->
+                            if (e is CancellationException) throw e
+                            FileLogger.e(TAG, "加载状态失败", e)
+                        }
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "刷新失败", e)

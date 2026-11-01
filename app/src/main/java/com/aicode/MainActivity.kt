@@ -8,8 +8,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -795,7 +797,9 @@ fun AppNavigation(
                 )
             }
             composable("git") {
-                val gitViewModel: GitViewModel = hiltViewModel()
+                // Activity 作用域：退出 Git 页后 ViewModel 不销毁，再次进入直接沿用上次数据，
+                // 避免每次进来都重新发现仓库 + 拉 status/log。
+                val gitViewModel: GitViewModel = hiltViewModel(checkNotNull(LocalActivity.current) as ViewModelStoreOwner)
                 GitScreen(
                     viewModel = gitViewModel,
                     onNavigateToCredentials = { navController.navigate("credentials") },

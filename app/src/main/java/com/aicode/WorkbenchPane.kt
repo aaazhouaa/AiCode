@@ -1,5 +1,6 @@
 package com.aicode
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -8,6 +9,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModelStoreOwner
 import com.aicode.feature.credentials.presentation.CredentialViewModel
 import com.aicode.feature.credentials.presentation.component.CredentialScreen
 import com.aicode.feature.editor.presentation.CodeEditorScreen
@@ -74,7 +76,8 @@ internal fun WorkbenchPaneContent(
                         onNavigateBack = { showCredentials = false }
                     )
                 } else {
-                    val gitViewModel: GitViewModel = hiltViewModel()
+                    // Activity 作用域：与全屏 Git 路由共用同一份数据，退出后再次打开不重新扫描。
+                    val gitViewModel: GitViewModel = hiltViewModel(checkNotNull(LocalActivity.current) as ViewModelStoreOwner)
                     GitScreen(
                         viewModel = gitViewModel,
                         onNavigateToCredentials = { showCredentials = true },

@@ -72,15 +72,21 @@ class GitRepository @Inject constructor(
      * 本地模式用 File 列子目录；远程模式下 File 操作无效（路径是远程的），runCatching 捕获后
      * 自动退化为只检查工作区根。返回按「根优先、子目录按名称排序」的路径列表。
      */
-    suspend fun discoverRepos(): List<String> {
+    suspend fun discoverRepos(): List<String> = withContext(Dispatchers.Default) {
         val root = workspaceRepository.currentPath()
-        val candidates = mutableListOf(root)
-        runCatching {
-            java.io.File(root).listFiles { f -> f.isDirectory }
-                ?.sortedBy { it.name }
-                ?.forEach { candidates.add(it.absolutePath) }
+        // 本地文件系统可访问时直接看 .git 是否存在，不为每个子目录起一次 git 进程：
+        // PRoot 下每条命令是几十到几百毫秒的固定开销，工作区目录一多就是 Git 页首屏最贵的部分。
+        // 远程模式下列目录会失败（路径是远程的），退回对根目录跑一次 git 探测。
+        val children = runCatching { java.io.File(root).listFiles { f -> f.isDirectory } }.getOrNull()
+        if (children != null) {
+            val candidates = listOf(root) + children
+                .filterNot { it.name.startsWith(".") }
+                .sortedBy { it.name }
+                .map { it.absolutePath }
+            // .git 在 worktree / submodule 里是文件而非目录，exists() 两种都认。
+            return@withContext candidates.filter { java.io.File(it, ".git").exists() }
         }
-        return candidates.filter { isGitRepo(it) }
+        listOf(root).filter { isGitRepo(it) }
     }
 
     /** 指定路径是否处于 git 工作树内（用于仓库发现与手动指定校验）。 */
@@ -326,6 +332,20 @@ class GitRepository @Inject constructor(
         val existingHashes = existingCommits.mapTo(HashSet()) { it.hash }
         val merged = existingCommits + newCommits.filter { it.hash !in existingHashes }
         GitGraphBuilder.buildGraph(merged, refs, hasMore = newCommits.size >= limit)
+    }
+
+    /**
+     * 仅用新的 refs 重建拓扑标注，**不重新拉取提交**。
+     *
+     * 首屏只拉本地分支做标注，全量分支/标签到位后走这里补全。若直接调 [graphAppend]，会按
+     * 已加载条数 skip 再拉一整页提交——进页面就多一次 `git log` 和整图重算，完全没有必要。
+     */
+    suspend fun rebuildGraph(
+        commits: List<GraphCommit>,
+        refs: Map<String, List<GitGraphRef>>,
+        hasMore: Boolean
+    ): GitGraph = withContext(Dispatchers.Default) {
+        GitGraphBuilder.buildGraph(commits, refs, hasMore = hasMore)
     }
 
     /**

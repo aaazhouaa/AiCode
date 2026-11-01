@@ -105,6 +105,10 @@ fun GitScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // 再次进入页面：ViewModel 由 Activity 持有，已有数据时静默刷新（列表原地保留、不闪 loading），
+    // 但提交记录与工作区状态仍会重新读取，终端里的改动进来就能看到。
+    LaunchedEffect(Unit) { viewModel.onEnterPage() }
+
     // toast → Snackbar 一次性消费。
     LaunchedEffect(state.toast) {
         state.toast?.let {
