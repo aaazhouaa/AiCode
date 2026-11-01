@@ -99,6 +99,9 @@ internal fun LogTab(
     graphLoadingMore: Boolean,
     listState: LazyListState,
     detailHash: String?,
+    /** 提交者筛选（null = 全部），由 ViewModel 持久化，退出页面/重启后保持。 */
+    authorFilter: String?,
+    onAuthorFilterChange: (String?) -> Unit,
     onOpenCommit: (String) -> Unit,
     onCloseCommit: () -> Unit,
     onFileDiff: (String, String) -> Unit,
@@ -114,8 +117,8 @@ internal fun LogTab(
     }
 
     var searchQuery by remember { mutableStateOf("") }
-    // 提交者筛选：null = 全部。选中后只显示该提交者的提交，直到点「全部提交者」或换人。
-    var authorFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    // 提交者筛选存在 ViewModel（按仓库持久化），这里不再用 rememberSaveable：
+    // 退出页面组合销毁后会丢，用户要求关闭 App / 重启手机也保持。
     var showAuthorSheet by remember { mutableStateOf(false) }
     // 图形区：默认紧凑窄条，只画当前提交自己的连线；点一下展开完整拓扑。
     var graphExpanded by rememberSaveable { mutableStateOf(false) }
@@ -294,7 +297,7 @@ internal fun LogTab(
             authors = authorOptions,
             selected = authorFilter,
             onSelect = {
-                authorFilter = it
+                onAuthorFilterChange(it)
                 showAuthorSheet = false
             },
             onDismiss = { showAuthorSheet = false }

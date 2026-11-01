@@ -10,6 +10,7 @@ import com.aicode.R
 import com.aicode.core.util.FileLogger
 import com.aicode.core.util.LineDiff
 import com.aicode.feature.agent.domain.workflow.AgentWorkflow
+import com.aicode.feature.git.data.GitFilterSettingsRepository
 import com.aicode.feature.git.domain.GitCommandFailureException
 import com.aicode.feature.git.domain.GitOutputTooLargeException
 import com.aicode.feature.git.domain.GitErrorMessage
@@ -58,7 +59,8 @@ class GitViewModel @Inject constructor(
     private val repository: GitRepository,
     @param:ApplicationContext private val context: Context,
     private val themeSettings: ThemeSettingsRepository,
-    private val agentWorkflow: AgentWorkflow
+    private val agentWorkflow: AgentWorkflow,
+    private val filterSettings: GitFilterSettingsRepository
 ) : ViewModel() {
 
     private companion object {
@@ -81,6 +83,8 @@ class GitViewModel @Inject constructor(
         val commits: List<GitCommit> = emptyList(),
         /** 拓扑图视图：提交（含父哈希）+ 引用 + 泳道布局，供 LogTab 绘制彩色分支连线。 */
         val graph: GitGraph = GitGraph.EMPTY,
+        /** 提交页的提交者筛选（null = 全部）。按仓库持久化，退出页面/重启 App 后保持。 */
+        val authorFilter: String? = null,
         val tags: List<GitTag> = emptyList(),
         val tab: GitTab = GitTab.STATUS,
         val busy: Boolean = false,
@@ -279,6 +283,7 @@ class GitViewModel @Inject constructor(
                     it.copy(
                         loading = false, notARepo = false, commits = commits, graph = graph,
                         hasRemote = hasRemote, hasIdentity = hasIdentity,
+                        authorFilter = filterSettings.authorFilter(effectiveRepo),
                         branchesLoaded = if (repoChanged) false else it.branchesLoaded,
                         branchesLoading = if (repoChanged) false else it.branchesLoading,
                         branches = if (repoChanged) emptyList() else it.branches,
@@ -305,6 +310,13 @@ class GitViewModel @Inject constructor(
                 _state.update { it.copy(loading = false, toast = context.getString(R.string.git_toast_refresh_failed, e.message)) }
             }
         }
+    }
+
+    /** 切换提交者筛选；按仓库持久化，退出页面或重启 App 后仍保持，直到下次主动改选。 */
+    fun setAuthorFilter(author: String?) {
+        val repo = _state.value.currentRepo
+        _state.update { it.copy(authorFilter = author) }
+        filterSettings.setAuthorFilter(repo, author)
     }
 
     /** 执行一个写操作：置 busy → 跑命令 → 刷新 → 反馈。操作间互斥。 */

@@ -285,6 +285,8 @@ fun GitScreen(
                             graphLoadingMore = state.graphLoadingMore,
                             listState = logListState,
                             detailHash = state.commitDetailHash,
+                            authorFilter = state.authorFilter,
+                            onAuthorFilterChange = viewModel::setAuthorFilter,
                             onOpenCommit = viewModel::openCommitDetail,
                             onCloseCommit = viewModel::closeCommitDetail,
                             onFileDiff = viewModel::loadCommitFileDiff,
