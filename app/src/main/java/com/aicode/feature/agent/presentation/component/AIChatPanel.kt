@@ -832,9 +832,8 @@ fun AIChatPanel(
     // 若直接拿 followBottom 推导这个判定，用户滑一下就会把已折叠的轮次又展开。
     var browsingTurnKey by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(currentSessionId) { browsingTurnKey = null }
-    LaunchedEffect(followBottom) {
-        if (followBottom) browsingTurnKey = null
-    }
+    // 不再在「回到底部」时清空 browsingTurnKey：用户滑到底部也属于主动浏览，收工不应折叠。
+    // 锁存只在「新一轮任务开始」时清空（见下方 LaunchedEffect(isBusy)），保证每一轮独立判定。
     // 拆块 + 工具分组：超长助手消息展开成多条有界 item（单条滚动轴、外观连续），
     // 连续的工具调用折成一个「N 次工具调用」分组；chatItems 的顺序即 LazyColumn item 顺序。
     // 提到这里（而不是 LazyColumn 分支内）是因为 isFarFromBottom 的「布局是否对应当前消息」判定
@@ -862,7 +861,13 @@ fun AIChatPanel(
     // 直到回到底部。用锁存而非持续读 followBottom，避免收工后再滑动把已折叠的轮次又顶开。
     var wasBusy by remember(currentSessionId) { mutableStateOf(false) }
     LaunchedEffect(isBusy) {
-        if (wasBusy && !isBusy && !followBottom && browsingTurnKey == null) {
+        if (isBusy) {
+            // 新一轮任务开始：清空上一轮的浏览锁存，让新一轮按「本轮是否浏览过」独立判定是否自动折叠。
+            // 不能放在「回到底部」时清空——用户滑到底部也算主动浏览，收工折叠会导致内容变矮 + 视口抖到底部。
+            browsingTurnKey = null
+        } else if (wasBusy && !followBottom && browsingTurnKey == null) {
+            // 下降沿兜底：用户在别处浏览时 agent 恰好收工，滚动动作若落在 isBusy 翻转之后，
+            // onUserLeaveBottom 因 isBusy 已翻转而没记录（它只在 isBusy 时记录），这里补记最新一轮保持展开。
             browsingTurnKey = lastTurnKey
         }
         wasBusy = isBusy
