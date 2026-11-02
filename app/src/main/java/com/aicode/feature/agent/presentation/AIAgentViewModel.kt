@@ -995,6 +995,7 @@ class AIAgentViewModel @Inject constructor(
         "readFile" -> "读取文件"
         "writeFile" -> "写入文件"
         "editFile" -> "编辑文件"
+        "sendFile" -> "发送文件"
         "search" -> "搜索代码"
         "list" -> "浏览文件"
         "websearch" -> "联网搜索"
@@ -1003,26 +1004,57 @@ class AIAgentViewModel @Inject constructor(
         "generateImage" -> "生成图片"
         "viewImage" -> "查看图片"
         "task" -> "启动子代理"
+        "messageParent" -> "汇报主会话"
         "todo" -> "整理待办"
         "askUserQuestion" -> "询问用户"
         "memory" -> "读写记忆"
         "loadSkill" -> "加载技能"
+        "planMode" -> "切换计划模式"
+        "manageMcp" -> "管理 MCP"
+        "goalStatus" -> "更新目标状态"
+        "Shizuku" -> "宿主命令（Shizuku）"
         else -> toolName.ifBlank { "工具调用" }
     }
 
-    /** 按 Bash 命令内容识别任务名（构建/测试/安装等），识别不出回退「执行命令」。 */
+    /** 按 Bash 命令内容识别任务名（定时/测试/编译/构建/安装等），识别不出回退「执行命令」。 */
     private fun describeBashCommand(args: String): String {
         val cmd = args.trim()
         if (cmd.isEmpty()) return "执行命令"
+
+        // 定时/等待类最优先：sleep/watch/timeout/cron 等必须单独归类，
+        // 否则会被下面「构建」的宽泛词（如 \bmake\b）误吞，或落到「执行命令」。
+        if (Regex("\\b(sleep|timeout|watch|cron|crontab|at|inotifywait)\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd)) {
+            return "定时任务"
+        }
+
+        // Gradle 命令按任务名细分，必须先判：否则 gradlew 整体落到「构建」，
+        // 把 compileDebugKotlin（编译验证）、testDebugUnitTest（单测）都误报成「构建」。
+        if (Regex("(^|[\\s;/\\\\])(\\./)?gradlew?(\\.bat)?(\\s|$)", RegexOption.IGNORE_CASE).containsMatchIn(cmd)) {
+            return when {
+                Regex("(?:^|[\\s:])(test|connectedAndroidTest)\\w*", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "测试"
+                Regex("(?:^|[\\s:])(compile)\\w*", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "编译"
+                Regex("(?:^|[\\s:])(assemble|bundle)\\w*", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
+                Regex("(?:^|[\\s:])(clean)\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "清理"
+                Regex("(?:^|[\\s:])(install)\\w*", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "安装"
+                else -> "构建"
+            }
+        }
+
         return when {
-            Regex("assemble\\w*|bundle\\w*|gradlew|\\bgradle\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
-            Regex("\\bpip3?\\s+install\\b|\\bpoetry\\b|\\bconda\\b|\\buv\\s+pip\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "安装依赖"
+            // 测试（单测/集成测试）
+            Regex("\\bpytest\\b|\\bjest\\b|\\bvitest\\b|\\bunittest\\b|\\bcargo\\s+test\\b|\\bgo\\s+test\\b|\\bmvn\\s+test\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "测试"
+            // 安装依赖（poetry/conda/uv 需带 install 动作，避免 poetry run 之类误判）
+            Regex("\\bpip3?\\s+install\\b|\\bpoetry\\s+install\\b|\\bconda\\s+install\\b|\\buv\\s+pip\\s+install\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "安装依赖"
             Regex("\\b(npm|pnpm|yarn)\\s+(install|add|ci)\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "安装依赖"
+            // Git 同步
             Regex("\\bgit\\s+(clone|fetch|pull|push)\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "Git 同步"
-            Regex("\\bpytest\\b|\\bjest\\b|\\bvitest\\b|go\\s+test|unittest", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "测试"
-            Regex("\\bvite\\b|\\bwebpack\\b|\\besbuild\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
-            Regex("\\bcargo\\s+(build|test|run)\\b|\\brustc\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
-            Regex("\\bmake\\b|\\bcmake\\b|\\bninja\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
+            // 编译
+            Regex("\\bcargo\\s+build\\b|\\brustc\\b|\\bgo\\s+build\\b|\\bjavac\\b|\\bgcc\\b|\\bg\\+\\+\\b|\\bclang\\b|\\btsc\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "编译"
+            // 运行（解释器/脚本/包管理器 run）
+            Regex("\\bcargo\\s+run\\b|\\bgo\\s+run\\b|\\bnpm\\s+run\\b|\\bnode\\b|\\bpython3?\\b|\\bbash\\b|\\bsh\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "运行"
+            // 构建（收紧：make/cmake/ninja/vite build/webpack/esbuild，不再把 \bmake\b 单独宽泛匹配）
+            Regex("\\bvite\\s+build\\b|\\bwebpack\\b|\\besbuild\\b|\\bcmake\\b|\\bninja\\b", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
+            Regex("(^|[\\s;&|])(make)(\\s|$)", RegexOption.IGNORE_CASE).containsMatchIn(cmd) -> "构建"
             else -> "执行命令"
         }
     }
