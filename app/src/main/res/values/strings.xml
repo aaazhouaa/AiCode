@@ -361,6 +361,9 @@
     <string name="settings_permission_apk_install_desc">允许安装 APK 安装包</string>
     <string name="settings_permission_storage">访问存储空间</string>
     <string name="settings_permission_storage_desc">读写工作区文件与容器镜像</string>
+    <string name="settings_permission_all_files">所有文件访问</string>
+    <string name="settings_permission_all_files_desc">允许访问外部本地工作区（设备上的任意目录）</string>
+    <string name="settings_permission_all_files_denied_desc">外部工作区需要「所有文件访问」权限才能读写设备目录，请在系统设置中手动开启</string>
     <string name="settings_permission_battery">忽略电池优化</string>
     <string name="settings_permission_battery_desc">允许后台持续运行，减少被杀</string>
     <string name="settings_autostart_title">自启动管理</string>

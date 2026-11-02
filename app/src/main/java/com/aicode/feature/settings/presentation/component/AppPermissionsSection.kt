@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -68,6 +69,7 @@ internal fun AppPermissionsSection(
 
     var apkInstallAllowed by remember { mutableStateOf(context.packageManager.canRequestPackageInstalls()) }
     var storageGranted by remember { mutableStateOf(checkStorageGranted(context)) }
+    var allFilesGranted by remember { mutableStateOf(isAllFilesGranted(context)) }
     var batteryExempt by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
     var showStorageDeniedDialog by remember { mutableStateOf(false) }
@@ -76,6 +78,7 @@ internal fun AppPermissionsSection(
     LifecycleResumeEffect(Unit) {
         apkInstallAllowed = context.packageManager.canRequestPackageInstalls()
         storageGranted = checkStorageGranted(context)
+        allFilesGranted = isAllFilesGranted(context)
         batteryExempt = isIgnoringBatteryOptimizations(context)
         onRefreshShizuku()
         onPauseOrDispose { }
@@ -136,6 +139,31 @@ internal fun AppPermissionsSection(
                     }
                 },
                 trailing = { PermissionStatusText(allowed = storageGranted) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Folder,
+                title = stringResource(R.string.settings_permission_all_files),
+                subtitle = stringResource(R.string.settings_permission_all_files_desc),
+                onClick = {
+                    if (!allFilesGranted) {
+                        runCatching {
+                            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                Intent(
+                                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            } else {
+                                Intent(
+                                    Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            }
+                            context.startActivity(intent)
+                        }
+                    }
+                },
+                trailing = { PermissionStatusText(allowed = allFilesGranted) }
             )
             SettingsDivider()
             SettingsRow(
@@ -415,6 +443,11 @@ private fun PermissionStatusText(allowed: Boolean) {
 private fun checkStorageGranted(context: android.content.Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+
+/** Android 11+ 是否已授予「所有文件访问」；更低版本无需（无 scoped storage）。 */
+private fun isAllFilesGranted(context: android.content.Context): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+        Environment.isExternalStorageManager()
 
 private fun isIgnoringBatteryOptimizations(context: android.content.Context): Boolean {
     val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager

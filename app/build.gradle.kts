@@ -104,14 +104,7 @@ android {
     defaultConfig {
         applicationId = "com.aicode"
         minSdk = 26
-        // 仍锁 targetSdk 28，但阻塞项已不是 PRoot：proot 全套改由 jniLibs 装到 nativeLibraryDir
-        // （见 sourceSets 与 packaging.jniLibs 注释），W^X 不再挡容器启动。升级前待解决：
-        //   1. 外部工作区（EXTERNAL_LOCAL）目前用 File API 直读 /storage/emulated/0，29+ 需改走
-        //      MANAGE_EXTERNAL_STORAGE；
-        //   2. TerminalKeepaliveService 的 dataSync 前台服务在 35 上有 24 小时内累计 6 小时上限，
-        //      保活需换 specialUse。
-        // 代价：不能上 Google Play。
-        targetSdk = 28
+        targetSdk = 36
         versionCode = gitCommitCount()
         versionName = gitVersionName()
 
@@ -237,8 +230,7 @@ android {
         }
     }
 
-    // targetSdk 故意锁定 28（原因见 defaultConfig 处注释），代价是不进 Google Play——故关闭该平台的过期 targetSdk 检查。
-    // 同时关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，
+    // release 构建关闭 lint 检查：本仓库只出 GitHub Release 不上 Play，
     // lintVital 在 R8/打包阶段额外吃 CPU 与内存（2 核 7GB runner 易 OOM），且其发现不阻塞发布。
     lint {
         disable += "ExpiredTargetSdkVersion"

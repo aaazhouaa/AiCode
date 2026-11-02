@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
@@ -146,7 +147,18 @@ class TerminalKeepaliveService : Service() {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
             .build()
 
-        runCatching { startForeground(NOTIFICATION_ID, notification) }
+        runCatching {
+            // Android 14（API 34）+ 要求显式指定前台服务类型；manifest 声明 specialUse 后，
+            // 不带 type 的旧重载在高版本可能因类型不匹配被拒，这里用 ServiceCompat 显式传类型。
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                else 0
+            )
+        }
             .onSuccess { acquireWifiLocks() }
             .onFailure { FileLogger.e(TAG, "startForeground failed", it) }
     }
