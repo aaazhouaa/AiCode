@@ -19,57 +19,17 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
-// gitVersionName 从 git tag 动态解析，彻底解决“发版时手改 build.gradle.kts 与 tag 双向不同步”问题。
-// 规则：
-//   1. 若当前 commit 刚好有 tag（如 v1.7.0 或 v1.7.0-rc1），直接提取为 "1.7.0" 或 "1.7.0-rc1"；
-//   2. 若当前 commit 比上个 tag 多了 N 个提交（如 v1.7.0-2-g04bc2fa），提取为 "1.7.0-dev.2+g04bc2fa"；
-//   3. 若无 git 环境或报错，fallback 到默认版本号 "1.7.0-dev"。
-// providers.exec 而非 Runtime.exec：配置缓存要求配置阶段的外部进程调用登记为 provider 输入，
-// 直接 fork 会让缓存条目被丢弃（external process started）。
-val gitDescribeOutput = providers.exec {
-    workingDir = rootProject.projectDir
-    commandLine("git", "describe", "--tags", "--always", "--dirty")
-    isIgnoreExitValue = true
-}.standardOutput.asText
+// versionName：写死在 gradle.properties 的 VERSION_NAME，发版时手动 bump。
+// 不再用 git describe 动态生成——否则非 tag 提交会构建出带 -dev.N+hash 后缀的包，
+// 用户在「更新检查」里看到 dev 版本号、且每次提交都变，无法判定是否为正式版。
+fun gitVersionName(): String =
+    (project.findProperty("VERSION_NAME") as String?).orEmpty().ifBlank { "1.13.0" }
 
-fun gitVersionName(): String = try {
-    val raw = gitDescribeOutput.get().trim()
-    if (raw.startsWith("v")) {
-        val version = raw.substring(1) // 去掉开头的 'v'
-        // 如 "1.7.0"、"1.7.0-rc1" 或 "1.7.0-2-g04bc2fa"
-        // 将 git describe 格式 "1.7.0-2-g04bc2fa" 转为规范语义化版本 "1.7.0-dev.2+g04bc2fa"
-        val devRegex = Regex("""^(\d+\.\d+\.\d+(?:-[a-zA-Z0-9]+)?)-(\d+)-g([0-9a-f]+)(.*)$""")
-        val match = devRegex.matchEntire(version)
-        if (match != null) {
-            val (base, count, hash, dirty) = match.destructured
-            "$base-dev.$count+$hash$dirty"
-        } else {
-            version
-        }
-    } else if (raw.isNotEmpty()) {
-        "1.7.0-dev+$raw"
-    } else {
-        "1.7.0-dev"
-    }
-} catch (e: Exception) {
-    "1.7.0-dev"
-}
-
-// versionCode 从 git 提交数自动生成：随每次提交单调递增，无需手动维护，
-// 杜绝"升 versionName 忘升 versionCode"导致升级判定失效。
-// 工作目录用 rootProject.projectDir（仓库根），无 git 环境（如下载 zip 构建）时 fallback 到 1。
-// CI 额外校验 versionCode 单调（见 .github/workflows/android-release.yml），防 rebase/squash 改写历史导致回退。
-val gitCommitCountOutput = providers.exec {
-    workingDir = rootProject.projectDir
-    commandLine("git", "rev-list", "--count", "HEAD")
-    isIgnoreExitValue = true
-}.standardOutput.asText
-
-fun gitCommitCount(): Int = try {
-    gitCommitCountOutput.get().trim().toIntOrNull() ?: 1
-} catch (e: Exception) {
-    1
-}
+// versionCode：写死在 gradle.properties 的 VERSION_CODE，发版时手动 bump。
+// 不再用 git 提交数——rebase/squash 会改提交数导致 versionCode 回退、旧包覆盖新包升级失败。
+// 规则：去掉点直接拼接，如 1.13.0 → 1130。
+fun gitVersionCode(): Int =
+    (project.findProperty("VERSION_CODE") as String?)?.toIntOrNull() ?: 1130
 
 // AI 内置文档（~/.aicode/docs）的源在仓库根的 docs-site/docs：同一份 Markdown 既构建 VitePress
 // 文档站，也在这里复制进 assets/docs 打进 APK，保证「站上看到的」与「AI 读到的」永远一致。
@@ -105,7 +65,7 @@ android {
         applicationId = "com.aicode"
         minSdk = 26
         targetSdk = 36
-        versionCode = gitCommitCount()
+        versionCode = gitVersionCode()
         versionName = gitVersionName()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

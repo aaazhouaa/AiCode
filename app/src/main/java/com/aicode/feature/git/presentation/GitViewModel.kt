@@ -88,8 +88,6 @@ class GitViewModel @Inject constructor(
         val tags: List<GitTag> = emptyList(),
         val tab: GitTab = GitTab.STATUS,
         val busy: Boolean = false,
-        /** 正在后台刷新（静默刷新时顶栏刷新按钮转圈提示，避免缓存内容无提示地突然跳变）。 */
-        val refreshing: Boolean = false,
         val toast: String? = null,
         /** 是否已配置远程仓库，控制拉取/推送按钮可用性。 */
         val hasRemote: Boolean = false,
@@ -243,23 +241,20 @@ class GitViewModel @Inject constructor(
      * 提交记录与工作区状态每次都重新读——文件变动、新提交必须进来就能看到，不能靠缓存混过去。
      */
     fun onEnterPage() {
-        val s = _state.value
         // 首次由 init 触发的刷新还在跑，不重复叠一次。
-        if (s.loading) return
-        if (s.commits.isNotEmpty()) refresh(silent = true) else refresh()
+        if (_state.value.loading) return
+        refresh()
     }
 
-    fun refresh(silent: Boolean = false) {
+    fun refresh() {
         if (_state.value.busy) return
         // 容器未就绪时不执行 git 命令，直接提示用户去终端页完成初始化，避免误显示"非 Git 仓库"。
         repository.notReadyHint()?.let { hint ->
             _state.update { it.copy(loading = false, toast = hint) }
             return
         }
-        // 静默刷新且已有内容时不显示全屏 loading，列表原地保留。
-        val showLoading = !silent || _state.value.commits.isEmpty()
-        _state.update { it.copy(loading = showLoading, toast = null) }
-        if (!showLoading) _state.update { it.copy(refreshing = true) }
+        // 每次刷新都整页 loading（与点击刷新按钮一致），不再区分静默刷新。
+        _state.update { it.copy(loading = true, toast = null) }
         viewModelScope.launch {
             try {
                 // 发现工作区里的 git 仓库（根 + 一层子目录），选中当前或默认仓库。
@@ -271,7 +266,7 @@ class GitViewModel @Inject constructor(
                 val effectiveRepo = current?.takeIf { it in repos } ?: repos.firstOrNull()
                 repository.setRepoPath(effectiveRepo)
                 if (effectiveRepo == null) {
-                    _state.update { it.copy(loading = false, notARepo = true, repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = null, refreshing = false) }
+                    _state.update { it.copy(loading = false, notARepo = true, repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = null) }
                     return@launch
                 }
                 // 提交列表与仓库元信息先行：status 是大仓库里唯一可能上秒的命令，不该让提交记录等它。
@@ -293,8 +288,7 @@ class GitViewModel @Inject constructor(
                         tags = if (repoChanged) allRefs.tags else it.tags,
                         branchesLoaded = if (repoChanged) true else it.branchesLoaded,
                         branchesLoading = false,
-                        repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo,
-                        refreshing = false
+                        repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo
                     )
                 }
                 // 页面已打开：后台拉取全量分支/标签，用户切到 BRANCHES tab 时无需再等。
@@ -314,7 +308,7 @@ class GitViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "刷新失败", e)
-                _state.update { it.copy(loading = false, refreshing = false, toast = context.getString(R.string.git_toast_refresh_failed, e.message)) }
+                _state.update { it.copy(loading = false, toast = context.getString(R.string.git_toast_refresh_failed, e.message)) }
             }
         }
     }

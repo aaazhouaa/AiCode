@@ -172,7 +172,7 @@ object AgentModule {
     @Singleton
     fun provideOkHttpClient(@ApplicationContext context: Context): OkHttpClient {
         // 统一 UA 为 aicode/<版本> (Android)；请求已带显式 UA（如用户自定义头）时不覆盖。
-        // 版本号走 PackageManager（项目未开启 BuildConfig），dev 构建为 1.x.y-dev.N+hash 天然可溯源。
+        // 版本号走 PackageManager（项目未开启 BuildConfig），versionName 由 gradle.properties 的 VERSION_NAME 控制。
         val userAgent = runCatching {
             val name = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
             "aicode/$name (Android)"

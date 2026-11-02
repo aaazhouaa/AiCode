@@ -29,7 +29,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -196,7 +195,7 @@ fun GitScreen(
                     IconButton(onClick = onNavigateToCredentials) {
                         Icon(FeatherIcons.Key, contentDescription = stringResource(R.string.git_credentials_and_identity))
                     }
-                    IconButton(onClick = { viewModel.refresh() }, enabled = !state.busy && !state.refreshing) {
+                    IconButton(onClick = { viewModel.refresh() }, enabled = !state.busy) {
                         Icon(FeatherIcons.RefreshCw, contentDescription = stringResource(R.string.git_refresh))
                     }
                 }
@@ -205,14 +204,6 @@ fun GitScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // 静默刷新指示：内容区顶部细进度条，避免缓存内容无提示地突然跳变（顶栏按钮转圈不够显眼）。
-            if (state.refreshing) {
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                )
-            }
             Column(modifier = Modifier.fillMaxSize()) {
             when {
                 state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
