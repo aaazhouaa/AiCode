@@ -88,6 +88,8 @@ class GitViewModel @Inject constructor(
         val tags: List<GitTag> = emptyList(),
         val tab: GitTab = GitTab.STATUS,
         val busy: Boolean = false,
+        /** 正在后台刷新（静默刷新时顶栏刷新按钮转圈提示，避免缓存内容无提示地突然跳变）。 */
+        val refreshing: Boolean = false,
         val toast: String? = null,
         /** 是否已配置远程仓库，控制拉取/推送按钮可用性。 */
         val hasRemote: Boolean = false,
@@ -257,6 +259,7 @@ class GitViewModel @Inject constructor(
         // 静默刷新且已有内容时不显示全屏 loading，列表原地保留。
         val showLoading = !silent || _state.value.commits.isEmpty()
         _state.update { it.copy(loading = showLoading, toast = null) }
+        if (!showLoading) _state.update { it.copy(refreshing = true) }
         viewModelScope.launch {
             try {
                 // 发现工作区里的 git 仓库（根 + 一层子目录），选中当前或默认仓库。
@@ -268,7 +271,7 @@ class GitViewModel @Inject constructor(
                 val effectiveRepo = current?.takeIf { it in repos } ?: repos.firstOrNull()
                 repository.setRepoPath(effectiveRepo)
                 if (effectiveRepo == null) {
-                    _state.update { it.copy(loading = false, notARepo = true, repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = null) }
+                    _state.update { it.copy(loading = false, notARepo = true, repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = null, refreshing = false) }
                     return@launch
                 }
                 // 提交列表与仓库元信息先行：status 是大仓库里唯一可能上秒的命令，不该让提交记录等它。
@@ -290,7 +293,8 @@ class GitViewModel @Inject constructor(
                         tags = if (repoChanged) allRefs.tags else it.tags,
                         branchesLoaded = if (repoChanged) true else it.branchesLoaded,
                         branchesLoading = false,
-                        repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo
+                        repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo,
+                        refreshing = false
                     )
                 }
                 // 页面已打开：后台拉取全量分支/标签，用户切到 BRANCHES tab 时无需再等。
@@ -310,7 +314,7 @@ class GitViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "刷新失败", e)
-                _state.update { it.copy(loading = false, toast = context.getString(R.string.git_toast_refresh_failed, e.message)) }
+                _state.update { it.copy(loading = false, refreshing = false, toast = context.getString(R.string.git_toast_refresh_failed, e.message)) }
             }
         }
     }
