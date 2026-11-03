@@ -827,13 +827,13 @@ fun AIChatPanel(
     // 浏览历史时，收工不应折叠当前轮。
     var positionedSession by rememberSaveable { mutableStateOf<String?>(null) }
     var followBottom by rememberSaveable { mutableStateOf(true) }
-    // 执行期间用户滚离底部（或点开某条过程项）时，把当时正在跑的那一轮记下来：它收工后
-    // 保持展开，直到用户回到底部。只在「执行中」记录，收工后再怎么滑都不会改动它——
+    // 执行期间用户滚离底部（或点开某条过程项）时，把视口所在的那一轮记下来：它收工后保持展开，
+    // 避免折叠删掉正在浏览的过程项。只在「执行中」记录，收工后再怎么滑都不会改动它——
     // 若直接拿 followBottom 推导这个判定，用户滑一下就会把已折叠的轮次又展开。
     var browsingTurnKey by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(currentSessionId) { browsingTurnKey = null }
-    // 不再在「回到底部」时清空 browsingTurnKey：用户滑到底部也属于主动浏览，收工不应折叠。
-    // 锁存只在「新一轮任务开始」时清空（见下方 LaunchedEffect(isBusy)），保证每一轮独立判定。
+    // 不在回底或新一轮开始时清空：锁存的是具体轮次 key，新一轮 key 不同，天然不会被误锁；
+    // 而进入新一轮时清空会把用户正看着的上一轮当场折叠，同样打断浏览。
     // 拆块 + 工具分组：超长助手消息展开成多条有界 item（单条滚动轴、外观连续），
     // 连续的工具调用折成一个「N 次工具调用」分组；chatItems 的顺序即 LazyColumn item 顺序。
     // 提到这里（而不是 LazyColumn 分支内）是因为 isFarFromBottom 的「布局是否对应当前消息」判定
@@ -855,24 +855,25 @@ fun AIChatPanel(
     // 「执行完毕自动收起过程」开关时的最新一轮。
     val collapseFinishedTurn by viewModel.collapseFinishedTurn.collectAsStateWithLifecycle()
     val lastTurnKey = messages.lastOrNull()?.let { stableTurnKeys[it.id] }
-    // 收工下降沿兜底：用户在别处浏览时 agent 恰好收工，滚动动作若落在 isBusy 翻转之后，
-    // browsingTurnKey 没机会记录（onUserLeaveBottom 只在 isBusy 时记录），这一轮仍会被折叠、
-    // 视口跟着错位。这里在收工那一刻补记：只要收工时用户不在底部，就锁存最新一轮保持展开，
-    // 直到回到底部。用锁存而非持续读 followBottom，避免收工后再滑动把已折叠的轮次又顶开。
-    var wasBusy by remember(currentSessionId) { mutableStateOf(false) }
-    LaunchedEffect(isBusy) {
-        if (isBusy) {
-            // 新一轮任务开始：清空上一轮的浏览锁存，让新一轮按「本轮是否浏览过」独立判定是否自动折叠。
-            // 不能放在「回到底部」时清空——用户滑到底部也算主动浏览，收工折叠会导致内容变矮 + 视口抖到底部。
-            browsingTurnKey = null
-        } else if (wasBusy && !followBottom && browsingTurnKey == null) {
-            // 下降沿兜底：用户在别处浏览时 agent 恰好收工，滚动动作若落在 isBusy 翻转之后，
-            // onUserLeaveBottom 因 isBusy 已翻转而没记录（它只在 isBusy 时记录），这里补记最新一轮保持展开。
-            browsingTurnKey = lastTurnKey
-        }
+    // 收工下降沿在同一帧内判定：isBusy 刚翻转的这一帧就用「用户是否离底」决定是否保持展开。
+    // 不能只在 LaunchedEffect 里补记——effect 跑之前 chatItems 已按折叠构建，过程项被删、
+    // LazyColumn 锚点失效，视口当帧就跳到该轮折叠头（任务顶部）。
+    var wasBusy by remember(currentSessionId) { mutableStateOf(isBusy) }
+    val justFinished = wasBusy && !isBusy
+    SideEffect {
+        // 本帧判定为「离底收工」时立刻锁存这一轮，供后续帧沿用；随后同步 busy 状态。
+        if (justFinished && !followBottom && browsingTurnKey == null) browsingTurnKey = lastTurnKey
         wasBusy = isBusy
     }
-    val keepExpandedTurnKey = if (!collapseFinishedTurn) lastTurnKey else browsingTurnKey
+    val keepExpandedTurnKey = when {
+        // 关闭了「执行完毕自动收起过程」：最新一轮始终展开。
+        !collapseFinishedTurn -> lastTurnKey
+        // 执行中离底浏览过的那一轮（视口所在轮）保持展开。
+        browsingTurnKey != null -> browsingTurnKey
+        // 离底但没记录到锁存（尚未滚动、或布局未就绪）：收工这一帧先展开最新轮。
+        justFinished && !followBottom -> lastTurnKey
+        else -> null
+    }
     // 长会话里重建整张列表要遍历全部消息（拆轮、分组、拆块），在主线程上做会卡住每次落库与补载历史。
     // 超过阈值后改在后台算，算完前继续显示上一版（LazyColumn 与它的条数一直自洽）；
     // 切换会话后的首版仍同步算，避免短暂显示上一个会话的内容。
@@ -1125,14 +1126,34 @@ fun AIChatPanel(
     var userScrollGesture by remember { mutableStateOf(false) }
     var pointerDown by remember { mutableStateOf(false) }
     var nestedFling by remember { mutableStateOf(false) }
-    // 用户主动离开底部时：停跟随；若此刻正有一轮在跑，记下它，收工后不折叠。
-    // 读 isBusy / activeTurnKey 用 rememberUpdatedState：userScrollConnection 只创建一次，
+    // 用户主动离开底部时：停跟随；若此刻正有一轮在跑，记下用户正在看的那一轮，收工后不动它。
+    // 读 isBusy / 锁存候选值用 rememberUpdatedState：userScrollConnection 只创建一次，
     // 闭包里的普通局部变量会停在首帧的值。
+    // item key → 所属轮：上翻到旧轮时执行轮在视口外，锁存执行轮保护不了浏览位置，
+    // 必须锁存视口首项所在的轮，收工折叠才不会删掉用户正在看的过程项。
+    val itemTurnKeyByKey = remember(chatItems, stableTurnKeys) {
+        chatItems.associate { item ->
+            item.key to (item.turnHeader?.key ?: stableTurnKeys[item.message.id])
+        }
+    }
+    val viewportTurnKey: () -> String? = remember(itemTurnKeyByKey, listState) {
+        {
+            val key = listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? String
+            key?.let { itemTurnKeyByKey[it] }
+        }
+    }
     val latestBusyForBrowsing = rememberUpdatedState(isBusy)
     val latestActiveTurnKey = rememberUpdatedState(activeTurnKey)
+    val latestLastTurnKey = rememberUpdatedState(lastTurnKey)
+    val latestViewportTurnKey = rememberUpdatedState(viewportTurnKey)
     val onUserLeaveBottom: () -> Unit = {
         followBottom = false
-        if (latestBusyForBrowsing.value) browsingTurnKey = latestActiveTurnKey.value
+        if (latestBusyForBrowsing.value) {
+            // 视口解析不到（布局未就绪）时退回执行轮 / 最新轮，避免锁存落空后被折叠。
+            browsingTurnKey = latestViewportTurnKey.value()
+                ?: latestActiveTurnKey.value
+                ?: latestLastTurnKey.value
+        }
     }
     val userScrollConnection = remember(listState) {
         object : NestedScrollConnection {
