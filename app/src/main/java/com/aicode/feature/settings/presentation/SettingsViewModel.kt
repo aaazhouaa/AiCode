@@ -234,7 +234,7 @@ enum class TokenStatsPeriod(val labelRes: Int, val startMillis: (Long) -> Long) 
 
 /** Token 统计页的完整 UI 状态，由周期 + 5 个聚合 Flow 组合而成。 */
 data class TokenStatsUiState(
-    val period: TokenStatsPeriod = TokenStatsPeriod.LAST_7_DAYS,
+    val period: TokenStatsPeriod = TokenStatsPeriod.TODAY,
     val summary: com.aicode.feature.agent.data.local.dao.CallSummary? = null,
     val trend: List<com.aicode.feature.agent.data.local.dao.DayCallStats> = emptyList(),
     val providers: List<com.aicode.feature.agent.data.local.dao.ProviderCallStats> = emptyList(),
@@ -780,7 +780,7 @@ class SettingsViewModel @Inject constructor(
     val connectionState: StateFlow<ConnectionState> = remoteSshConnection.connectionState
 
     /** Token 统计：当前选中的统计周期。 */
-    private val _tokenStatsPeriod = MutableStateFlow(TokenStatsPeriod.LAST_7_DAYS)
+    private val _tokenStatsPeriod = MutableStateFlow(TokenStatsPeriod.TODAY)
     val tokenStatsPeriod: StateFlow<TokenStatsPeriod> = _tokenStatsPeriod.asStateFlow()
 
     /** Token 统计：周期内汇总、趋势、渠道、模型、明细的组合状态。 */
