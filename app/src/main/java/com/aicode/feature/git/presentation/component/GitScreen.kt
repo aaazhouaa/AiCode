@@ -126,7 +126,12 @@ fun GitScreen(
     val branchesListState = rememberLazyListState()
     val logListState = rememberLazyListState()
 
-    val pagerState = rememberPagerState { GitTab.entries.size }
+    val pagerState = rememberPagerState(initialPage = state.tab.ordinal) { GitTab.entries.size }
+
+    // 切页时同步 ViewModel：切到「分支」页会重拉分支/标签，终端里变动的分支回来就能看到。
+    LaunchedEffect(pagerState.currentPage) {
+        viewModel.setTab(GitTab.entries[pagerState.currentPage])
+    }
 
     val tabsScrolling by remember {
         derivedStateOf {

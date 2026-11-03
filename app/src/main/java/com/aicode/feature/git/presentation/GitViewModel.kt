@@ -2,7 +2,6 @@ package com.aicode.feature.git.presentation
 
 import android.content.Context
 import android.content.res.Configuration
-import android.os.SystemClock
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -33,6 +32,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
@@ -111,7 +111,7 @@ class GitViewModel @Inject constructor(
         val loadingCommit: String? = null,
         /** 正在分页加载更旧的提交（滚动到底触发）。不置 busy，避免阻塞写操作。 */
         val graphLoadingMore: Boolean = false,
-        /** 全量分支/标签是否已加载（进入页面即后台拉取，不阻塞首屏；切 BRANCHES tab 时未完成则继续等）。 */
+        /** 是否已至少加载过一次分支/标签，仅在从未加载时展示全屏占位。 */
         val branchesLoaded: Boolean = false,
         /** 正在加载全量分支/标签。 */
         val branchesLoading: Boolean = false,
@@ -140,8 +140,8 @@ class GitViewModel @Inject constructor(
 
     init { refresh() }
 
-    /** 上次成功加载全量分支/标签的时间（切回「分支」页超过一段时间就重拉）。 */
-    private var branchesLoadedAt = 0L
+    /** 进行中的分支/标签拉取；重新拉取时取消上一个，避免旧结果覆盖新结果。 */
+    private var branchesJob: Job? = null
 
     /** 写操作后的整体刷新结果：status 与 graph 必须一起返回，避免列表与工作区状态短暂不一致。 */
     private data class RepoSnapshot(
@@ -176,29 +176,23 @@ class GitViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 切换页签；切到「分支」页时重新拉一次分支/标签，终端里新建或删除的分支进来就能看到。
+     */
     fun setTab(tab: GitTab) {
         _state.update { it.copy(tab = tab) }
-        // 兜底：进入页面即已异步加载；若尚未开始/完成（如加载失败后重进），切 tab 时再补一次。
-        // 已加载过但超过 30 秒，重新拉一次——分支/标签可能在终端里变过。
-        if (tab == GitTab.BRANCHES && !_state.value.branchesLoading) {
-            val loaded = _state.value.branchesLoaded
-            val stale = loaded && SystemClock.elapsedRealtime() - branchesLoadedAt > 30_000L
-            if (!loaded || stale) {
-                if (stale) _state.update { it.copy(branchesLoaded = false) }
-                loadBranches()
-            }
-        }
+        // 整页刷新正在跑时交给它：它本就会拉全量 refs，避免两边并发重建拓扑图。
+        if (tab == GitTab.BRANCHES && !_state.value.loading) loadBranches()
     }
 
     /**
-     * 加载全量分支/标签（进入页面 [refresh] 成功后即触发，无需等切 BRANCHES tab）。
-     * 一次 [repository.loadAllRefs] 拉取，填充 branches/tags 并用全量 refs 更新 graph 的标注。
-     * 不置 busy，只读不阻塞写操作。已加载过则跳过；写操作后需手动调 [refreshBranchesIfLoaded] 同步。
+     * 重新拉取全量分支/标签，并用全量 refs 更新 graph 的标注。不置 busy，只读不阻塞写操作。
+     * 已有一个拉取在跑时取消它再拉，保证拿到的是本次刷新开始之后的最新结果。
      */
     fun loadBranches() {
-        if (_state.value.branchesLoading || _state.value.branchesLoaded) return
+        branchesJob?.cancel()
         _state.update { it.copy(branchesLoading = true) }
-        viewModelScope.launch {
+        branchesJob = viewModelScope.launch {
             try {
                 val allRefs = repository.loadAllRefs()
                 // 只重算 refs 标注，不能再调 graphAppend：那会按已加载条数 skip 再拉一整页提交。
@@ -211,7 +205,6 @@ class GitViewModel @Inject constructor(
                 _state.update {
                     it.copy(branches = allRefs.branches, tags = allRefs.tags, graph = graph, commits = commits, branchesLoading = false, branchesLoaded = true)
                 }
-                branchesLoadedAt = SystemClock.elapsedRealtime()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "加载分支列表失败", e)
@@ -221,24 +214,7 @@ class GitViewModel @Inject constructor(
     }
 
     /**
-     * 写操作后同步刷新已加载的分支/标签（若已加载过）。未加载过则不主动拉，保持延迟加载语义。
-     */
-    private fun refreshBranchesIfLoaded() {
-        if (!_state.value.branchesLoaded) return
-        viewModelScope.launch {
-            try {
-                val allRefs = repository.loadAllRefs()
-                _state.update { it.copy(branches = allRefs.branches, tags = allRefs.tags) }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                FileLogger.e(TAG, "刷新分支列表失败", e)
-            }
-        }
-    }
-
-    /**
-     * 进入页面时调用：已有数据就静默刷新（列表原地保留、不回到全屏 loading），没有数据才显示 loading。
-     * 提交记录与工作区状态每次都重新读——文件变动、新提交必须进来就能看到，不能靠缓存混过去。
+     * 进入页面时调用：重新读取仓库、提交记录、工作区状态与分支/标签，终端里的变动进来就能看到。
      */
     fun onEnterPage() {
         // 首次由 init 触发的刷新还在跑，不重复叠一次。
@@ -254,6 +230,8 @@ class GitViewModel @Inject constructor(
             return
         }
         // 每次刷新都整页 loading（与点击刷新按钮一致），不再区分静默刷新。
+        // 刷新本身会重拉全量 refs，取消进行中的分支拉取，避免旧拓扑覆盖新结果。
+        branchesJob?.cancel()
         _state.update { it.copy(loading = true, toast = null) }
         viewModelScope.launch {
             try {
@@ -270,30 +248,22 @@ class GitViewModel @Inject constructor(
                     return@launch
                 }
                 // 提交列表与仓库元信息先行：status 是大仓库里唯一可能上秒的命令，不该让提交记录等它。
-                // refs 直接拉全量（本地+远程+标签），否则同仓库重进时 loadBranches 因 branchesLoaded
-                // 已 true 而跳过，graph 只带本地 refs、远程分支（origin/main）标注丢失。
+                // refs 直接拉全量（本地+远程+标签），分支/标签与 graph 标注都用这一份最新结果。
                 val allRefs = repository.loadAllRefs()
                 val graph = repository.graph(refs = allRefs.refsByCommit)
                 val commits = graph.toGitCommits()
                 val hasRemote = repository.hasRemote()
                 val hasIdentity = repository.getUserName().isNotBlank()
-                // 换了仓库才清分支/标签缓存；同仓库重进沿用，避免每次进页面都跑全量 for-each-ref。
-                val repoChanged = effectiveRepo != _state.value.currentRepo
                 _state.update {
                     it.copy(
                         loading = false, notARepo = false, commits = commits, graph = graph,
                         hasRemote = hasRemote, hasIdentity = hasIdentity,
                         authorFilter = filterSettings.authorFilter(effectiveRepo),
-                        branches = if (repoChanged) allRefs.branches else it.branches,
-                        tags = if (repoChanged) allRefs.tags else it.tags,
-                        branchesLoaded = if (repoChanged) true else it.branchesLoaded,
-                        branchesLoading = false,
+                        branches = allRefs.branches, tags = allRefs.tags,
+                        branchesLoaded = true, branchesLoading = false,
                         repos = repos, subdirs = subdirs, workspaceRoot = workspaceRoot, currentRepo = effectiveRepo
                     )
                 }
-                // 页面已打开：后台拉取全量分支/标签，用户切到 BRANCHES tab 时无需再等。
-                loadBranches()
-                branchesLoadedAt = SystemClock.elapsedRealtime()
                 // status 后台补：工作区改动与未跟踪目录展开态就绪后单独更新，状态页短暂为空属预期。
                 launch {
                     runCatching { repository.status() }
@@ -345,7 +315,7 @@ class GitViewModel @Inject constructor(
                     val snap = loadSnapshot(includeIdentity = false)
                     val commits = snap.graph.toGitCommits()
                     _state.update { it.copy(busy = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, untrackedDirFiles = snap.untrackedDirFiles, notARepo = false, toast = msg) }
-                    refreshBranchesIfLoaded()
+                    loadBranches()
                     onComplete?.invoke()
                 } else {
                     _state.update { it.copy(busy = false, notARepo = true, toast = msg) }
@@ -567,7 +537,7 @@ class GitViewModel @Inject constructor(
                     val commits = snap.graph.toGitCommits()
                     _state.update { it.copy(checkoutLoading = null, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, notARepo = false, toast = msg) }
                     // 切换分支后分支列表可能变化，若已加载过则刷新。
-                    refreshBranchesIfLoaded()
+                    loadBranches()
                 } else {
                     _state.update { it.copy(checkoutLoading = null, notARepo = true, toast = msg) }
                 }

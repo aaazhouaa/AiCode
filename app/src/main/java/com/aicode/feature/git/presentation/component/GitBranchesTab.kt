@@ -101,7 +101,8 @@ internal fun BranchesTab(
             onLoadBranches()
         }
     }
-    if (branchesLoading || (!branchesLoaded && branches.isEmpty() && tags.isEmpty())) {
+    // 已有列表时刷新只原地更新，不再盖一层全屏 loading。
+    if (branches.isEmpty() && tags.isEmpty() && (branchesLoading || !branchesLoaded)) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
